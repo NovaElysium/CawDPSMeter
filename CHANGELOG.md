@@ -3,6 +3,14 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-08-31
+
+### Fixed
+- The window no longer rubber-bands back to the centre of the screen when
+  you drag it toward the bottom-right (or any edge). Dropping the window now
+  keeps it where you put it. Saved positions are still pulled back on screen
+  on load if the resolution changed, but by clamping, not by re-centring.
+
 ## [1.0.2] - 2026-08-30
 
 Combat-end rework. Please report a fight that still ends late or merges by

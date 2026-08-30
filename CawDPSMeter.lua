@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.2 Combat End Rework
+-- Caw DPS Meter v1.0.3 Window Position Fix
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.2"
+D.version = "1.0.3"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -2481,16 +2481,30 @@ local function resetWindowPosition()
 end
 
 local function ensureWindowOnScreen()
+    -- Nudge the window back onto the screen WITHOUT discarding the player's
+    -- chosen position. The old version reset to centre whenever an edge check
+    -- tripped, which on some resolutions / custom clients fired for a perfectly
+    -- visible bottom-right placement and rubber-banded the window to the middle.
     local sw=UIParent and UIParent:GetWidth() or 0
     local sh=UIParent and UIParent:GetHeight() or 0
-    local l=frame:GetLeft(); local r=frame:GetRight(); local t=frame:GetTop(); local b=frame:GetBottom()
-    if sw<=0 or sh<=0 or not l or not r or not t or not b then return false end
-    -- Keep at least ~40 px of the meter reachable after resolution/UI-scale changes.
-    if r<40 or l>(sw-40) or t<40 or b>(sh-40) then
-        resetWindowPosition()
-        return true
-    end
-    return false
+    local l=frame:GetLeft(); local tp=frame:GetTop()
+    local fw=frame:GetWidth(); local fh=frame:GetHeight()
+    if sw<=0 or sh<=0 or not l or not tp or not fw or not fh then return false end
+
+    local nl,nt=l,tp
+    if fw<=sw then
+        if nl<0 then nl=0 elseif nl>sw-fw then nl=sw-fw end
+    elseif nl>0 then nl=0 end
+    -- tp is the Y of the top edge measured from the screen bottom.
+    if fh<=sh then
+        if nt<fh then nt=fh elseif nt>sh then nt=sh end
+    elseif nt<sh then nt=sh end
+
+    if nl==l and nt==tp then return false end
+
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",nl,nt)
+    return true
 end
 
 local function restoreWindowState()
@@ -2557,7 +2571,9 @@ frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart",function() if not D.locked then this:StartMoving() end end)
 frame:SetScript("OnDragStop",function()
     this:StopMovingOrSizing()
-    ensureWindowOnScreen()
+    -- No on-screen correction here: SetClampedToScreen keeps the window
+    -- reachable during the drag, and forcing a correction on every drop is what
+    -- caused the rubber-band. Saved positions are still clamped on load.
     saveWindowState()
 end)
 
