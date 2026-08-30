@@ -1,11 +1,9 @@
-<h1 align="center">Caw DPS Meter</h1>
-
 <p align="center">
-  <img src="Media/CawBrand_preview.png" alt="Caw DPS Meter" width="460">
+  <img src=".github/banner.png" alt="Caw DPS Meter" width="600">
 </p>
 
 <p align="center">
-  Lightweight combat meter for WoW 1.12 &mdash; damage, healing, utility and aura uptime.
+  Lightweight combat meter for WoW 1.12: damage, healing, utility and aura uptime.
 </p>
 
 <p align="center">
@@ -57,7 +55,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
 4. Restart the client or `/reload`, then type `/cd`.
 
-> GitHub's green **Code -> Download ZIP** button produces a wrongly named
+> GitHub's green **Code** then **Download ZIP** button produces a wrongly named
 > folder. Use a tagged release, or rename the folder to `CawDPSMeter` after
 > extracting.
 
