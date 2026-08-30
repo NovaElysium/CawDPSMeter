@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.1 Stability RC55 Release Audit Fixes
+-- Caw DPS Meter v1.0.1 Stability RC56 Chat Report Fix
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.1-rc55"
+D.version = "1.0.1-rc56"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -657,6 +657,7 @@ local function addDamage(actorKey,actorName,guid,ownerKey,isPet,amount,spell,cri
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.damage=a.damage+amount; a.hits=a.hits+1; if crit then a.crits=a.crits+1 end
     addSpell(a,spell,amount,crit); D.parsedTotal=D.parsedTotal+1
+    D.lastRosterCombatActivity=GetTime()
     D.lastParsed=tostring(sourceEvent).." "..tostring(a.name).." "..tostring(spell).." +"..tostring(amount); return true
 end
 
@@ -671,6 +672,7 @@ local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,cr
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.healing=a.healing+amount; a.heals=a.heals+1; if crit then a.healCrits=a.healCrits+1 end
     addHealSpell(a,spell,amount,crit); D.parsedTotal=D.parsedTotal+1
+    D.lastRosterCombatActivity=GetTime()
     D.lastParsed=tostring(sourceEvent).." "..tostring(a.name).." "..tostring(spell).." +"..tostring(amount).." heal"; return true
 end
 
@@ -3307,6 +3309,13 @@ function D.reportTotalLine(list,count,dur)
     end
 end
 
+function D.safeReportText(line)
+    line=tostring(line or "")
+    line=string.gsub(line,"|","/")
+    line=string.gsub(line,"\n"," ")
+    return line
+end
+
 function D.sendReport(channel)
     if not channel or not SendChatMessage then
         chat("Chat reporting is unavailable on this client.")
@@ -3338,18 +3347,18 @@ function D.sendReport(channel)
     local header="Caw DPS Meter - "..label.." - "..D.reportSegmentName()
     if dur>0 then header=header.." - "..string.format("%.1fs",dur) end
 
-    local ok,err=pcall(SendChatMessage,header,channel)
+    local ok,err=pcall(SendChatMessage,D.safeReportText(header),channel)
     if not ok then chat("Report failed: "..tostring(err)); return end
 
     local limit=count
     if limit>5 then limit=5 end
     local i=1
     while i<=limit do
-        local sent,sendErr=pcall(SendChatMessage,D.reportLineForActor(list[i],i,dur),channel)
+        local sent,sendErr=pcall(SendChatMessage,D.safeReportText(D.reportLineForActor(list[i],i,dur)),channel)
         if not sent then chat("Report failed: "..tostring(sendErr)); return end
         i=i+1
     end
-    pcall(SendChatMessage,D.reportTotalLine(list,count,dur),channel)
+    pcall(SendChatMessage,D.safeReportText(D.reportTotalLine(list,count,dur)),channel)
 end
 
 local function visibleRowCount()

@@ -90,8 +90,8 @@ client before opening a PR.
 
 ## Credits
 
-Built by [NovaElysium](https://github.com/NovaElysium) and [CawDPSMeter](https://github.com/CawDPSMeter).
+Built by **Huginn &amp; Muninn**: [NovaElysium](https://github.com/NovaElysium) and [CawDPSMeter](https://github.com/CawDPSMeter).
 
 ## License
 
-[MIT](LICENSE) &copy; 2026 NovaElysium and contributors
+[MIT](LICENSE) &copy; 2026 Huginn &amp; Muninn
