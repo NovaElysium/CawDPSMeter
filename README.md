@@ -15,10 +15,18 @@
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src=".github/screenshot-meter.png" alt="Damage / DPS view with per-player rows" width="410">
+  &nbsp;&nbsp;
+  <img src=".github/screenshot-modes.png" alt="Mode selector: Damage, Healing, Damage Taken, Deaths, Interrupts, Crowd Control" width="410">
+</p>
+
 ## What it is
 
 Caw DPS Meter is a compact damage/healing/utility meter for the 1.12 client
-(Turtle WoW and other Vanilla private servers). It reads `RAW_COMBATLOG` via
+(RavenCraft, OctoWoW and other Vanilla private servers). It reads `RAW_COMBATLOG` via
 SuperWoW, so it tracks combat events the default combat log never exposes, and
 it can pull data from other players running the addon to fill in what your
 client did not see.
@@ -43,7 +51,7 @@ client did not see.
 
 | Component | Notes |
 |-----------|-------|
-| WoW 1.12 client | Turtle WoW / Vanilla private servers |
+| WoW 1.12 client | RavenCraft / OctoWoW / Vanilla private servers |
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
 
