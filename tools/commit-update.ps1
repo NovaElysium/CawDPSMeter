@@ -15,11 +15,20 @@
       (## Version / ## Author / ## X-License / ## X-Website).
     - Reads the version from the ## Title line and writes it into ## Version.
     - Warns if D.version in the .lua does not match the Title.
+    - Adds a Co-authored-by trailer for the colleague (his ZIP = his code).
     - Shows you the diff, then commits and pushes after you confirm.
 #>
 param(
     [string]$Message
 )
+
+# --- colleague credited as co-author on every commit -------------------------
+# Put his GitHub no-reply address here (he finds it at github.com/settings/emails,
+# "Keep my email addresses private"). Example:
+#   1234567+cawdpsmeter@users.noreply.github.com
+# Until this is filled in, commits go through without the trailer.
+$CoAuthorName  = 'cawdpsmeter'
+$CoAuthorEmail = ''
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -48,7 +57,7 @@ else {
 # --- 2. rebuild the managed metadata block ------------------------------------
 $meta = @()
 if ($version) { $meta += "## Version: $version" }
-$meta += '## Author: NovaElysium'
+$meta += '## Author: NovaElysium, cawdpsmeter'
 $meta += '## X-License: MIT'
 $meta += '## X-Website: https://github.com/NovaElysium/Caw-DPS-Meter'
 
@@ -103,7 +112,14 @@ if (-not $Message) { Write-Host 'No message given. Nothing committed.' -Foregrou
 $answer = Read-Host "`nCommit everything above and push? (y/n)"
 if ($answer -ne 'y') { Write-Host 'Stopped. Nothing committed.' -ForegroundColor Yellow; return }
 
+$fullMessage = $Message
+if ($CoAuthorEmail -match '^[^@\s]+@[^@\s]+$') {
+    $fullMessage += "`n`nCo-authored-by: $CoAuthorName <$CoAuthorEmail>"
+} else {
+    Write-Warning "No co-author email set in this script, committing without the Co-authored-by trailer."
+}
+
 git add -A
-git commit -m $Message
+git commit -m $fullMessage
 git push
 Write-Host "`nPushed to origin/main." -ForegroundColor Green

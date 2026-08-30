@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1--rc37-7fbf4d" alt="Version">
+  <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FNovaElysium%2FCaw-DPS-Meter%2Fmain%2FCawDPSMeter.toc&search=%23%23%20Version%3A%20%28.%2B%29&replace=%241&label=version&color=7fbf4d" alt="Version">
   <img src="https://img.shields.io/badge/WoW-1.12%20(Vanilla)-1f6feb" alt="WoW 1.12">
   <img src="https://img.shields.io/badge/license-MIT-3fb950" alt="MIT License">
   <img src="https://img.shields.io/badge/requires-SuperWoW%20%2B%20SuperAPI-d29922" alt="Requires SuperWoW + SuperAPI">
@@ -88,6 +88,10 @@ Issues and pull requests are welcome. Keep changes Lua 5.0 compatible (no `#`
 length operator, no `%s` gsub tricks that 5.0 lacks) and test against the 1.12
 client before opening a PR.
 
+## Credits
+
+Built by [NovaElysium](https://github.com/NovaElysium) and [cawdpsmeter](https://github.com/cawdpsmeter).
+
 ## License
 
-[MIT](LICENSE) &copy; 2026 NovaElysium
+[MIT](LICENSE) &copy; 2026 NovaElysium and contributors
