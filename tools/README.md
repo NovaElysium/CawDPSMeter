@@ -15,3 +15,6 @@ so he shows up as a contributor. Until then commits go through without it.
 ```powershell
 .\tools\commit-update.ps1 -Message "rc50: fixed CC segment bug"
 ```
+
+Or just double-click **`commit-update.cmd`** in this folder and type the
+message when it asks.
