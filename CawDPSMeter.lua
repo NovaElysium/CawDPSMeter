@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0 Release
+-- Caw DPS Meter v1.0.1 Combat End Fix
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0"
+D.version = "1.0.1"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0

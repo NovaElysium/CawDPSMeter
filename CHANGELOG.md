@@ -3,6 +3,17 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-08-30
+
+### Fixed
+- In a group the meter now ends the current segment when the local player
+  leaves combat, instead of holding it open until the whole group is idle.
+  A grace close scheduled by leaving combat is no longer cancelled by another
+  group member's recent activity; re-entering combat still keeps the segment.
+- Stale crowd-control entries no longer block combat end. A CC target that
+  dies while controlled, or a missed fade line, previously kept the segment
+  open until the next fight.
+
 ## [1.0] - 2026-08-30
 
 Initial public release.
