@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.1 Stability RC56 Chat Report Fix
+-- Caw DPS Meter v1.0 Release
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.1-rc56"
+D.version = "1.0"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -3263,25 +3263,35 @@ function D.reportSegmentName()
 end
 
 function D.reportLineForActor(a,rank,dur)
+    local prefix="#"..tostring(rank).." "..tostring(a.name)..": "
     if D.mode=="damage" then
         local value=actorDisplayDamage(a); local rate=0
         if dur>0 then rate=value/dur end
-        return tostring(rank)..". "..tostring(a.name).." - "..comma(value).." ("..string.format("%.1f",rate).." DPS)"
+        return prefix..comma(value).." damage - "..string.format("%.1f",rate).." DPS"
     elseif D.mode=="damageTaken" then
-        return tostring(rank)..". "..tostring(a.name).." - "..comma(a.damageTaken or 0).." damage taken"
+        return prefix..comma(a.damageTaken or 0).." damage taken"
     elseif D.mode=="deaths" then
-        local line=tostring(rank)..". "..tostring(a.name).." - "..tostring(a.deaths or 0).." deaths"
-        if a.deathLast then line=line.." | last: "..tostring(a.deathLast.sourceName or "Unknown").." - "..tostring(a.deathLast.ability or "Unknown").." ("..comma(a.deathLast.damage or 0).." dmg)" end
+        local deaths=a.deaths or 0
+        local word="deaths"
+        if deaths==1 then word="death" end
+        local line=prefix..tostring(deaths).." "..word
+        if a.deathLast then
+            line=line.." - Killing Blow: "..tostring(a.deathLast.sourceName or "Unknown")
+                .." - "..tostring(a.deathLast.ability or "Unknown")
+                .." - "..comma(a.deathLast.damage or 0).." dmg"
+            if a.deathLast.crit then line=line.." (crit)" end
+            if a.deathLast.overkill~=nil then line=line.." - "..comma(a.deathLast.overkill).." overkill" end
+        end
         return line
     elseif D.mode=="healing" then
         local value=actorDisplayHealing(a); local rate=0
         if dur>0 then rate=value/dur end
-        return tostring(rank)..". "..tostring(a.name).." - "..comma(value).." ("..string.format("%.1f",rate).." HPS)"
+        return prefix..comma(value).." healing - "..string.format("%.1f",rate).." HPS"
     elseif D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then
         local value=utilityTotal(a,D.mode)
-        return tostring(rank)..". "..tostring(a.name).." - "..string.format("%.1fs",value).." ("..string.format("%.1f%%",auraAverageUptime(a,D.mode))..")"
+        return prefix..string.format("%.1fs",value).." - "..string.format("%.1f%%",auraAverageUptime(a,D.mode)).." uptime"
     end
-    return tostring(rank)..". "..tostring(a.name).." - "..tostring(utilityTotal(a,D.mode))
+    return prefix..tostring(utilityTotal(a,D.mode))
 end
 
 function D.reportTotalLine(list,count,dur)
@@ -3289,21 +3299,22 @@ function D.reportTotalLine(list,count,dur)
     if D.mode=="damage" then
         while i<=count do total=total+actorDisplayDamage(list[i]); i=i+1 end
         local rate=0; if dur>0 then rate=total/dur end
-        return "Total: "..comma(total).." ("..string.format("%.1f",rate).." DPS)"
+        return "Total: "..comma(total).." damage - "..string.format("%.1f",rate).." DPS"
     elseif D.mode=="damageTaken" then
         while i<=count do total=total+(list[i].damageTaken or 0); i=i+1 end
         return "Total: "..comma(total).." damage taken"
     elseif D.mode=="deaths" then
         while i<=count do total=total+(list[i].deaths or 0); i=i+1 end
-        return "Total deaths: "..tostring(total)
+        local word="deaths"; if total==1 then word="death" end
+        return "Total: "..tostring(total).." "..word
     elseif D.mode=="healing" then
         while i<=count do total=total+actorDisplayHealing(list[i]); i=i+1 end
         local rate=0; if dur>0 then rate=total/dur end
-        return "Total: "..comma(total).." ("..string.format("%.1f",rate).." HPS)"
+        return "Total: "..comma(total).." healing - "..string.format("%.1f",rate).." HPS"
     else
         while i<=count do total=total+utilityTotal(list[i],D.mode); i=i+1 end
         if D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then
-            return "Total active: "..string.format("%.1fs",total)
+            return "Total active time: "..string.format("%.1fs",total)
         end
         return "Total: "..tostring(total)
     end
@@ -3344,7 +3355,7 @@ function D.sendReport(channel)
 
     local dur=getDuration()
     local label=MODE_LABELS[D.mode] or tostring(D.mode)
-    local header="Caw DPS Meter - "..label.." - "..D.reportSegmentName()
+    local header="Caw DPS Meter: "..label.." - "..D.reportSegmentName()
     if dur>0 then header=header.." - "..string.format("%.1fs",dur) end
 
     local ok,err=pcall(SendChatMessage,D.safeReportText(header),channel)

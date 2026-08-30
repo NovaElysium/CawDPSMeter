@@ -25,16 +25,19 @@ client did not see.
 
 ## Features
 
-- **Damage & DPS** with per-spell breakdown and pet / totem attribution
-- **Healing** tracking per player and per spell
-- **Utility modes:** interrupts, crowd control, CC breaks, dispels, buffs,
-  debuffs cast, debuffs received
-- **Aura uptime:** group buffs and weapon enchants tracked across the raid
+- **Damage & DPS** and **Healing & HPS**, with per-spell breakdown; pet damage
+  and healing fold into the owner, totem damage is attributed to the caster
+- **Damage taken** and **Deaths** with killing-blow detail
+- **Utility modes:** interrupts, crowd control, CC breaks (with the breaking
+  ability and its damage), dispels, buff uptime, debuffs cast, debuffs received
+- **Aura tracking:** group buffs, weapon buffs and poisons across the raid
 - **Segments:** current fight, last fight, overall session, plus a rolling
   10-fight history (`/cd history`)
-- **Caw Sync:** shares combat snapshots with other users over SuperAPI addon
-  messages, so late joiners and missed events still get full numbers
-- Movable, lockable window with a saved position
+- **Caw Sync:** shares damage and healing snapshots with other users over
+  SuperAPI addon messages, so late joiners and missed events still get full
+  numbers (damage taken and deaths are local to your client)
+- **Chat reports** to Say, Party, Raid or Guild from the in-window Report button
+- Persistent window layout, lock state and selected mode
 
 ## Requirements
 
@@ -73,7 +76,10 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 | `/cd resetpos` | move the window back to the default position |
 | `/cd current` / `/cd last` / `/cd overall` | switch segment |
 | `/cd history` | print the last fights to chat |
-| `/cd damage` \| `healing` \| `interrupts` \| `cc` \| `ccBreaks` \| `dispels` \| `buffs` \| `debuffsCast` \| `debuffsReceived` | switch mode |
+| `/cd damage` \| `healing` \| `damageTaken` \| `deaths` \| `interrupts` \| `cc` \| `ccBreaks` \| `dispels` \| `buffs` \| `debuffsCast` \| `debuffsReceived` | switch mode |
+
+Chat reports (Say / Party / Raid / Guild) go through the **Report** button in
+the window, not a slash command.
 
 ## Support
 

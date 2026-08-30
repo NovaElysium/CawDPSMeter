@@ -1,20 +1,33 @@
 # Changelog
 
-All notable changes to Caw DPS Meter are documented here.
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
-## [1.0.1-rc37] - 2026-08-30
+## [1.0] - 2026-08-30
 
 Initial public release.
 
-### Added
-- Damage / DPS meter with per-spell breakdown and pet / totem attribution.
-- Healing tracking per player and per spell.
-- Utility modes: interrupts, crowd control, CC breaks, dispels, buffs,
-  debuffs cast, debuffs received.
-- Group buff and weapon-enchant uptime tracking across the raid.
-- Segments: current fight, last fight, overall session, plus a rolling
-  10-fight history.
-- Caw Sync: combat snapshot sharing between users over SuperAPI addon messages.
-- Movable / lockable window with a saved position.
+### Meters
+- Damage and DPS, Healing and HPS, with per-spell breakdown.
+- Damage taken.
+- Deaths with killing-blow detail.
+- Pet damage and healing folded into the owner; totem damage attributed to the caster.
+
+### Utility
+- Interrupts, crowd control, CC breaks (with the breaking ability and its damage), dispels.
+- Buff uptime, debuffs cast, debuffs received.
+- Weapon buff and poison tracking.
+
+### Segments and sync
+- Current fight, last fight and overall session, plus a rolling 10-fight history.
+- Caw Sync shares damage and healing between users over SuperAPI addon messages,
+  including continuation from a dead client and combat-end grace handling.
+- Damage taken and deaths are observed locally and are not synchronised.
+
+### Interface
+- Movable, lockable window with persistent layout, lock state and selected mode.
+- Chat reports to Say, Party, Raid or Guild from the Report button.
+
+### Notes
+- Overkill is shown only when the server's RAW combat message supplies it.
+- Pet damage taken is not shown as a separate ranking entry.
