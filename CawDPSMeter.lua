@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.1 Stability RC37 CC Segment Preserve
+-- Caw DPS Meter v1.0.1 Stability RC54 Self Killing Blow Fix
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.1-rc37"
+D.version = "1.0.1-rc54"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -43,7 +43,21 @@ D.weaponBuffState = {main=nil,off=nil}
 D.pendingSelfTotem = nil
 D.activeCC = {}
 D.lastCCDamage = nil
+D.ccDamageByTarget = {}
 D.lastCCBreak = nil
+D.lastCCLanded = nil
+D.lastCCCastEvent = nil
+D.lastCCSpellInfo = nil
+D.lastCCSegmentOpen = nil
+D.lastIncomingDamage = {}
+D.lastDeathStamp = {}
+D.lastDeathRaw = nil
+D.lastDeathRecord = nil
+D.lastSelfIncomingDamage = nil
+D.lastRosterCombatActivity = 0
+D.localPlayerDead = false
+D.deadSyncLastReceived = 0
+D.deadSyncNextRequest = 0
 D.combatStateCheckAt = 0
 D.outOfCombatSince = 0
 D.weaponBuffKeywords = {
@@ -391,8 +405,8 @@ local function initializeSavedVariables()
     local savedMode=nil
     if CharDB and CharDB.mode then savedMode=CharDB.mode
     elseif DB and DB.mode then savedMode=DB.mode end
-    if savedMode=="damage" or savedMode=="healing" or savedMode=="interrupts"
-        or savedMode=="cc" or savedMode=="ccBreaks" or savedMode=="dispels"
+    if savedMode=="damage" or savedMode=="healing" or savedMode=="damageTaken" or savedMode=="deaths"
+        or savedMode=="interrupts" or savedMode=="cc" or savedMode=="ccBreaks" or savedMode=="dispels"
         or savedMode=="buffs" or savedMode=="debuffsCast" or savedMode=="debuffsReceived" then
         D.mode=savedMode
     end
@@ -480,6 +494,7 @@ local function newCounterTable() return {} end
 local function newActor(key,name,guid,ownerKey,isPet,classToken)
     local a={key=key,name=name or key,guid=guid,ownerKey=ownerKey,isPet=isPet,classToken=classToken,
         damage=0,hits=0,crits=0,spells={},healing=0,heals=0,healCrits=0,healSpells={},
+        damageTaken=0,damageTakenSpells={},deaths=0,deathCauses={},deathLast=nil,
         buffs=newCounterTable(),debuffsReceived=newCounterTable(),debuffsCast=newCounterTable(),
         interrupts=newCounterTable(),cc=newCounterTable(),ccBreaks=newCounterTable(),dispels=newCounterTable()}
     -- Backward-compatible alias used by older tooltip/debug code.
@@ -600,7 +615,11 @@ local function resetFight()
     D.rawUnknown={}; D.rawUnknownCount=0; D.utilityUnknown={}; D.utilityUnknownCount=0; D.ignoredOutsiders=0
     D.globalUtility={buffs={},debuffsReceived={},debuffsCast={},cc={},ccBreaks={},interrupts={},dispels={}}
     D.pendingSelfTotem=nil
-    D.activeCC={}; D.lastCCDamage=nil; D.lastCCBreak=nil
+    D.activeCC={}; D.lastCCDamage=nil; D.ccDamageByTarget={}; D.lastCCBreak=nil; D.lastCCLanded=nil
+    D.lastIncomingDamage={}; D.lastDeathStamp={}
+    D.lastSelfIncomingDamage=nil
+    D.lastRosterCombatActivity=0
+    D.deadSyncLastReceived=0; D.deadSyncNextRequest=0
     D.combatStateCheckAt=0; D.outOfCombatSince=0
     D.recentAuraCasts={}; D.activeAuraSources={}
     D.pendingSelfDispel=nil; D.recentSelfDispelCast=nil; D.lastSelfDispelRecord=nil
@@ -1166,6 +1185,13 @@ local function applySyncMessage(sender,msg)
         if applyBufferedSnapshot(incoming) then
             D.syncReceived=(D.syncReceived or 0)+1
             D.syncLastSource=sender
+            if D.localPlayerDead then
+                D.deadSyncLastReceived=GetTime()
+                if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
+                    D.pendingCombatEndAt=GetTime()+2.00
+                    D.pendingCombatEndStopTime=GetTime()
+                end
+            end
         end
         D.syncIncoming=nil
         return
@@ -1248,6 +1274,246 @@ local function utilityActor(info)
     return getActor(info.key,info.name,info.guid,info.ownerKey,info.isPet,info.classToken)
 end
 
+D.captureIncomingDamage = function(ev,text)
+    if not ev or not text then return false end
+
+    local targetInfo=nil
+    local sourceGuid=nil
+    local ability=nil
+    local amount=nil
+    local crit=false
+    local targetGuid=nil
+    local isSelfTarget=false
+    local _,_,a,b,c,d
+
+    -- Enemy melee -> player.
+    _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) hits you for ([0-9]+)")
+    if not amount then
+        _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) crits you for ([0-9]+)")
+        if amount then crit=true end
+    end
+    if amount then
+        isSelfTarget=true
+        targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+        targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
+        ability="Melee"
+    end
+
+    -- Enemy spell/ability -> player.
+    if not amount then
+        _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) hits you for ([0-9]+)")
+        if not amount then
+            _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) crits you for ([0-9]+)")
+            if amount then crit=true end
+        end
+        if amount then
+            isSelfTarget=true
+            targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+            targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
+        end
+    end
+
+    -- GUID -> roster member melee.
+    if not amount then
+        _,_,sourceGuid,targetGuid,amount=string.find(text,"^(0x[%x]+) hits (0x[%x]+) for ([0-9]+)")
+        if not amount then
+            _,_,sourceGuid,targetGuid,amount=string.find(text,"^(0x[%x]+) crits (0x[%x]+) for ([0-9]+)")
+            if amount then crit=true end
+        end
+        if amount then
+            targetInfo=D.guidToActor[targetGuid]
+            ability="Melee"
+        end
+    end
+
+    -- GUID -> roster member spell/ability.
+    if not amount then
+        _,_,sourceGuid,ability,targetGuid,amount=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+) for ([0-9]+)")
+        if not amount then
+            _,_,sourceGuid,ability,targetGuid,amount=string.find(text,"^(0x[%x]+)'s (.-) crits (0x[%x]+) for ([0-9]+)")
+            if amount then crit=true end
+        end
+        if amount then targetInfo=D.guidToActor[targetGuid] end
+    end
+
+    -- Periodic damage -> player.
+    if not amount then
+        _,_,amount,sourceGuid,ability=string.find(text,"^You suffer ([0-9]+) .- damage from (0x[%x]+)'s (.-)%.")
+        if amount then
+            isSelfTarget=true
+            targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+            targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
+        end
+    end
+
+    -- Periodic damage -> roster member.
+    if not amount then
+        _,_,targetGuid,amount,sourceGuid,ability=string.find(text,"^(0x[%x]+) suffers ([0-9]+) .- damage from (0x[%x]+)'s (.-)%.")
+        if amount then targetInfo=D.guidToActor[targetGuid] end
+    end
+
+    if not amount or not targetInfo or targetInfo.isPet then return false end
+
+    amount=tonumber(amount) or 0
+    if amount<=0 then return false end
+
+    -- After the local player dies, preserve the death segment. Once its
+    -- combat-end grace has finalized, continuing party combat must not create
+    -- a fresh "Current" segment and visually erase Damage Taken / Deaths.
+    if D.localPlayerDead and not D.inCombat then return false end
+
+    -- Group members can be observed taking damage even when this client never
+    -- enters personal combat. That incoming roster damage is valid encounter
+    -- activity and may open the segment while the local player is alive.
+    ensureStarted()
+    D.lastRosterCombatActivity=GetTime()
+
+    local actor=utilityActor(targetInfo)
+    if not actor then return false end
+
+    local sourceName=nil
+    if sourceGuid then
+        sourceName=D.currentEnemyNames[sourceGuid] or enemyNameFromGUID(sourceGuid)
+        if sourceName then D.currentEnemyNames[sourceGuid]=sourceName end
+    end
+    if not sourceName then sourceName=sourceGuid or "Environment" end
+    if not ability or ability=="" then ability="Melee" end
+
+    -- Only trust overkill when the combat text explicitly exposes it.
+    local overkill=nil
+    _,_,overkill=string.find(text,"%(([0-9]+) overkill%)")
+    if not overkill then _,_,overkill=string.find(text,"%(([0-9]+) Overkill%)") end
+    if not overkill then _,_,overkill=string.find(text,"overkill:? ([0-9]+)") end
+    if overkill then overkill=tonumber(overkill) end
+
+    actor.damageTaken=(actor.damageTaken or 0)+amount
+    if not actor.damageTakenSpells then actor.damageTakenSpells={} end
+    local detail=sourceName.." - "..ability
+    local entry=actor.damageTakenSpells[detail]
+    if not entry then entry={damage=0,hits=0,crits=0,critDamage=0,maxCrit=0,overkill=0,overkillKnown=0}; actor.damageTakenSpells[detail]=entry end
+    entry.damage=(entry.damage or 0)+amount
+    entry.hits=(entry.hits or 0)+1
+    if crit then
+        entry.crits=(entry.crits or 0)+1
+        entry.critDamage=(entry.critDamage or 0)+amount
+        if amount>(entry.maxCrit or 0) then entry.maxCrit=amount end
+    end
+    if overkill~=nil then
+        entry.overkill=(entry.overkill or 0)+overkill
+        entry.overkillKnown=(entry.overkillKnown or 0)+1
+    end
+
+    local hit={
+        targetKey=actor.key,
+        sourceGuid=sourceGuid,
+        sourceName=sourceName,
+        ability=ability,
+        amount=amount,
+        crit=crit,
+        overkill=overkill,
+        time=GetTime()
+    }
+    D.lastIncomingDamage[actor.key]=hit
+    if isSelfTarget then
+        D.lastSelfIncomingDamage=hit
+    end
+    return true
+end
+
+D.captureFriendlyDeath = function(ev,text)
+    if not text or text=="" then return false end
+
+    local targetInfo=nil
+    local targetGuid=nil
+    local deadName=nil
+    local selfDeath=false
+    local _,_,token
+
+    if string.find(text,"^You die%.$") or string.find(text,"^You have died%.$") then
+        selfDeath=true
+        D.localPlayerDead=true
+        D.deadSyncLastReceived=GetTime()
+        D.deadSyncNextRequest=GetTime()
+        targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+    else
+        _,_,targetGuid=string.find(text,"^(0x[%x]+) dies%.$")
+        if targetGuid then
+            targetInfo=D.guidToActor[targetGuid]
+        else
+            _,_,deadName=string.find(text,"^(.-) dies%.$")
+            if deadName and deadName~="" then
+                local k,info
+                for k,info in D.guidToActor do
+                    if info and not info.isPet and info.name==deadName then targetInfo=info; break end
+                end
+            end
+        end
+    end
+
+    if not targetInfo or targetInfo.isPet then return false end
+    if not D.inCombat or not D.startTime or D.startTime<=0 then ensureStarted() end
+    D.lastRosterCombatActivity=GetTime()
+
+    local actor=utilityActor(targetInfo)
+    if not actor then return false end
+
+    local now=GetTime()
+    local lastStamp=D.lastDeathStamp[actor.key] or 0
+    if now-lastStamp<1.0 then return true end
+    D.lastDeathStamp[actor.key]=now
+
+    local hit=D.lastIncomingDamage[actor.key]
+    -- On RavenCraft the player GUID/actor key can transiently disagree around
+    -- the death boundary. "You die." is authoritative, so fall back to the
+    -- separately captured last hit that explicitly targeted "you".
+    if selfDeath and (not hit or now-(hit.time or 0)>2.0) then
+        local selfHit=D.lastSelfIncomingDamage
+        if selfHit and now-(selfHit.time or 0)<=2.0 then hit=selfHit end
+    end
+    if hit and now-(hit.time or 0)>2.0 then hit=nil end
+
+    actor.deaths=(actor.deaths or 0)+1
+    if not actor.deathCauses then actor.deathCauses={} end
+
+    local sourceName=hit and hit.sourceName or "Unknown"
+    local ability=hit and hit.ability or "Unknown"
+    local damage=hit and (hit.amount or 0) or 0
+    local crit=hit and hit.crit or false
+    local overkill=hit and hit.overkill or nil
+    local causeName=sourceName.." - "..ability
+    local cause=actor.deathCauses[causeName]
+    if not cause then cause={count=0,damage=0,crits=0,overkill=0,overkillKnown=0}; actor.deathCauses[causeName]=cause end
+    cause.count=(cause.count or 0)+1
+    cause.damage=(cause.damage or 0)+damage
+    if crit then cause.crits=(cause.crits or 0)+1 end
+    if overkill~=nil then
+        cause.overkill=(cause.overkill or 0)+overkill
+        cause.overkillKnown=(cause.overkillKnown or 0)+1
+    end
+
+    actor.deathLast={
+        sourceName=sourceName,
+        ability=ability,
+        damage=damage,
+        crit=crit,
+        overkill=overkill,
+        time=now
+    }
+
+    -- If combat end is already pending, give this late death event time to
+    -- be committed into the same segment before snapshot/finalization.
+    if D.pendingCombatEnd then
+        local minEnd=now+0.50
+        if not D.pendingCombatEndAt or D.pendingCombatEndAt<minEnd then D.pendingCombatEndAt=minEnd end
+    end
+
+    D.lastDeathRaw=tostring(ev).." | "..tostring(text)
+    D.lastDeathRecord=actor.name.." | "..causeName.." | "..tostring(damage).." dmg"
+    if overkill~=nil then D.lastDeathRecord=D.lastDeathRecord.." | "..tostring(overkill).." overkill" end
+    if crit then D.lastDeathRecord=D.lastDeathRecord.." | CRIT" end
+    return true
+end
+
 D.tryClaimSelfTotemSource = function(source,spell,ev)
     if not source or not spell or ev~="CHAT_MSG_SPELL_PET_DAMAGE" then return nil end
     if D.guidToActor[source] then return D.guidToActor[source] end
@@ -1299,12 +1565,30 @@ local function recordUtility(kind,sourceInfo,spell,targetToken)
 end
 
 D.handleUnitCastCC = function(casterGUID,targetGUID,eventType,spellId)
+    -- Keep the latest CAST visible in /cdcc. RavenCraft/SuperWoW builds can
+    -- differ in SpellInfo return shape, and this tells us exactly what this
+    -- client provides without changing the proven combat parser blindly.
+    if eventType=="CAST" then
+        D.lastCCCastEvent=tostring(casterGUID).." | "..tostring(targetGUID).." | "..tostring(eventType).." | "..tostring(spellId)
+    end
+
     if not casterGUID or not targetGUID or not eventType or not spellId then return end
     if eventType~="CAST" then return end
-    if not SpellInfo then return end
+    if not SpellInfo then
+        D.lastCCSpellInfo="SpellInfo unavailable"
+        return
+    end
 
-    local ok,spell=pcall(SpellInfo,spellId)
-    if not ok or not spell or not CC_SPELLS[spell] then return end
+    local ok,s1,s2,s3,s4,s5=pcall(SpellInfo,spellId)
+    if ok then
+        D.lastCCSpellInfo=tostring(s1).." | "..tostring(s2).." | "..tostring(s3).." | "..tostring(s4).." | "..tostring(s5)
+    else
+        D.lastCCSpellInfo="ERROR: "..tostring(s1)
+        return
+    end
+
+    local spell=s1
+    if not spell or not CC_SPELLS[spell] then return end
 
     local si=actorFromSourceToken(casterGUID)
     if not si then return end
@@ -1342,7 +1626,35 @@ D.captureCCDamageCandidate = function(ev,text)
     end
 
     if source and target then
-        D.lastCCDamage={source=source,target=target,time=GetTime()}
+        local ability="Melee"
+
+        -- RC41 source/target detection above is intentionally untouched.
+        -- Only decorate the already-proven candidate with the damage ability.
+        local _,_,namedAbility=string.find(text,"^Your (.-) hits 0x[%x]+ for ")
+        if not namedAbility then _,_,namedAbility=string.find(text,"^Your (.-) crits 0x[%x]+ for ") end
+        if not namedAbility then
+            local _,_,srcGuid,groupAbility=string.find(text,"^(0x[%x]+)'s (.-) hits 0x[%x]+ for ")
+            if not srcGuid then _,_,srcGuid,groupAbility=string.find(text,"^(0x[%x]+)'s (.-) crits 0x[%x]+ for ") end
+            if srcGuid and groupAbility then namedAbility=groupAbility end
+        end
+        if namedAbility and namedAbility~="" then ability=namedAbility end
+
+        local _,_,breakAmount=string.find(text," for ([0-9]+)")
+        breakAmount=tonumber(breakAmount) or 0
+        local hit={source=source,target=target,ability=ability,amount=breakAmount,time=GetTime()}
+        D.lastCCDamage=hit
+        D.ccDamageByTarget[target]=hit
+
+        -- Bind the breaking hit to the active CC at damage time. RAW ordering
+        -- on RavenCraft is not guaranteed to leave D.activeCC intact until the
+        -- later AURA_GONE parser runs.
+        local active=D.activeCC[target]
+        if active then
+            active.breakSource=source
+            active.breakAbility=ability
+            active.breakAmount=breakAmount
+            active.breakTime=hit.time
+        end
     end
 end
 
@@ -1659,15 +1971,22 @@ local function parseUtility(ev,text)
     -- omit the caster, so the subsequent 'is afflicted by' line is correlated
     -- back to this source/target/spell tuple.
     _,_,spell,target=string.find(text,"^You cast (.-) on (0x[%x]+)%.")
-    if spell and target then local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then rememberAuraCast(si,spell,target); if CC_SPELLS[spell] then recordUtility("cc",si,spell,target) end; return true end end
+    if spell and target then
+        local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+        if si then rememberAuraCast(si,spell,target); return true end
+    end
     _,_,source,spell,target=string.find(text,"^(0x[%x]+) casts (.-) on (0x[%x]+)%.")
     if source then
         local si=actorFromSourceToken(source)
-        if si then rememberAuraCast(si,spell,target); if CC_SPELLS[spell] then recordUtility("cc",si,spell,target) end; return true end
+        if si then rememberAuraCast(si,spell,target); return true end
         if ignoreOutsideRoster(source) then return true end
     end
     _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+)%.")
-    if source and CC_SPELLS[spell] then local si=actorFromSourceToken(source); if si then rememberAuraCast(si,spell,target); return recordUtility("cc",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
+    if source and CC_SPELLS[spell] then
+        local si=actorFromSourceToken(source)
+        if si then rememberAuraCast(si,spell,target); return true end
+        if ignoreOutsideRoster(source) then return true end
+    end
 
     -- Helpful aura gained by a roster member. RavenCraft uses *_BUFFS (plural)
     -- for lines such as "You gain Blessing of Might.". Only parse "gain" as a
@@ -1717,11 +2036,19 @@ local function parseUtility(ev,text)
         if ti then local ta=utilityActor(ti); startAura(ta.debuffsReceived,spell,target) end
         local si=recentAuraCaster(target,spell)
         if si then
+            -- A landed hostile CC is itself enough to open the encounter.
+            -- This is especially important for Sap: RavenCraft may not put the
+            -- player into normal combat until the later breaking hit.
+            if CC_SPELLS[spell] and (not D.inCombat or D.startTime==0) then
+                ensureStarted()
+            end
             local sa=utilityActor(si); startAura(sa.debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=sa.key
             clearRecentAuraCast(target,spell)
             if CC_SPELLS[spell] then
                 addCount(sa.cc,spell,1)
                 D.activeCC[target]={spell=spell,sourceKey=sa.key,time=GetTime()}
+                D.lastCCLanded=spell.." | "..target.." | "..sa.name
+                D.lastCCSegmentOpen="inCombat="..tostring(D.inCombat).." | start="..tostring(D.startTime)
             end
         end
         if not ti and not si then addCount(D.globalUtility.debuffsReceived,spell,1) end
@@ -1741,19 +2068,38 @@ local function parseUtility(ev,text)
         if sourceKey and D.actors[sourceKey] then stopAura(D.actors[sourceKey].debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=nil end
         if CC_SPELLS[spell] then
             local active=D.activeCC[target]
-            local hit=D.lastCCDamage
-            if active and hit and hit.target==target and GetTime()-(hit.time or 0)<=0.75 then
-                local breaker=utilityActor(hit.source)
+            local hit=D.ccDamageByTarget[target]
+            local breakSource=nil
+            local breakAbility="Melee"
+            local breakAmount=0
+            local breakTime=0
+            if active and active.breakSource then
+                breakSource=active.breakSource
+                breakAbility=active.breakAbility or "Melee"
+                breakAmount=active.breakAmount or 0
+                breakTime=active.breakTime or 0
+            elseif hit then
+                breakSource=hit.source
+                breakAbility=hit.ability or "Melee"
+                breakAmount=hit.amount or 0
+                breakTime=hit.time or 0
+            end
+            if breakSource and GetTime()-breakTime<=2.00 then
+                local breaker=utilityActor(breakSource)
                 if breaker then
                     addCount(breaker.ccBreaks,spell,1)
-                    D.lastUtility=breaker.name.." ccBreaks "..spell
-                    D.lastCCBreak=breaker.name.." | "..spell.." | "..target
+                    if not breaker.ccBreakAbilities then breaker.ccBreakAbilities={} end
+                    local breakEntry=addCount(breaker.ccBreakAbilities,spell.." | "..breakAbility,1)
+                    breakEntry.damage=(breakEntry.damage or 0)+breakAmount
+                    D.lastUtility=breaker.name.." ccBreaks "..spell.." with "..breakAbility.." for "..tostring(breakAmount)
+                    D.lastCCBreak=breaker.name.." | "..spell.." | "..breakAbility.." | "..tostring(breakAmount).." | "..target
                 else
                     addCount(D.globalUtility.ccBreaks,spell,1)
-                    D.lastCCBreak="Global | "..spell.." | "..target
+                    D.lastCCBreak="Global | "..spell.." | "..breakAbility.." | "..target
                 end
             end
             D.activeCC[target]=nil
+            D.ccDamageByTarget[target]=nil
         end
         return true
     end
@@ -1830,7 +2176,7 @@ local function mergeNumericTable(dst,src)
     if not src then return end
     local k,v
     for k,v in src do
-        if k~="active" and k~="debuffs" then
+        if k~="active" and k~="debuffs" and k~="deathLast" then
             if type(v)=="number" then
                 dst[k]=(dst[k] or 0)+v
             elseif type(v)=="table" then
@@ -1866,6 +2212,7 @@ local function mergeOverallActors(srcActors)
             dst.ownerKey=a.ownerKey or dst.ownerKey
             dst.isPet=a.isPet
             if a.isTotem then dst.isTotem=true end
+            if a.deathLast then dst.deathLast=deepCopyTable(a.deathLast) end
             if dst.debuffsReceived then dst.debuffs=dst.debuffsReceived end
         end
     end
@@ -1873,7 +2220,7 @@ end
 
 local function snapshotFinishedFight()
     local total=0; local k,a
-    for k,a in D.actors do total=total+(a.damage or 0)+(a.healing or 0) end
+    for k,a in D.actors do total=total+(a.damage or 0)+(a.healing or 0)+(a.damageTaken or 0)+(a.deaths or 0) end
     if total<=0 then return end
     local entry={
         actors=deepCopyTable(D.actors),
@@ -1955,6 +2302,8 @@ local function sortedActors()
             local val
             if D.mode=="damage" then val=(a.damage or 0)+(petTotals[a.key] or 0)
             elseif D.mode=="healing" then val=(a.healing or 0)+(petTotals[a.key] or 0)
+            elseif D.mode=="damageTaken" then val=a.damageTaken or 0
+            elseif D.mode=="deaths" then val=a.deaths or 0
             elseif D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then val=D.auraEntryCount(a[D.mode])
             else val=utilityTotal(a,D.mode) end
             a._cawDisplayValue=val
@@ -1969,7 +2318,7 @@ local function sortedActors()
 end
 local function sortedTable(tbl,field)
     local list={}; local n=0; if not tbl then return list,0 end; local name,s
-    for name,s in tbl do local value=s[field or "count"] or 0; if field=="duration" then value=auraEntryDuration(s) end; n=n+1; list[n]={name=name,value=value,count=s.count or 0,hits=s.hits or 0,crits=s.crits or 0,damage=s.damage or 0,targetCount=auraTargetCount(s)} end
+    for name,s in tbl do local value=s[field or "count"] or 0; if field=="duration" then value=auraEntryDuration(s) end; n=n+1; list[n]={name=name,value=value,count=s.count or 0,hits=s.hits or 0,crits=s.crits or 0,damage=s.damage or 0,critDamage=s.critDamage or 0,maxCrit=s.maxCrit or 0,overkill=s.overkill or 0,overkillKnown=s.overkillKnown or 0,targetCount=auraTargetCount(s)} end
     table.sort(list,function(x,y) return x.value>y.value end); return list,n
 end
 local function sortedSpells(a)
@@ -1987,7 +2336,7 @@ local function classColor(a)
     return 0.45,0.45,0.45
 end
 
-local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",interrupts="Interrupts",cc="Crowd Control",ccBreaks="CC Breaks",dispels="Dispels",buffs="Buff Uptime",debuffsCast="Debuffs Cast",debuffsReceived="Debuffs Received"}
+local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",damageTaken="Damage Taken",deaths="Deaths",interrupts="Interrupts",cc="Crowd Control",ccBreaks="CC Breaks",dispels="Dispels",buffs="Buff Uptime",debuffsCast="Debuffs Cast",debuffsReceived="Debuffs Received"}
 
 -- UI -----------------------------------------------------------------------
 local frame=CreateFrame("Frame","CawDPSMeterWindow",UIParent); D.window=frame
@@ -2330,7 +2679,7 @@ segmentButton:SetScript("OnEnter",function() segmentButton:SetBackdropColor(0.14
 segmentButton:SetScript("OnLeave",function() segmentButton:SetBackdropColor(0.08,0.08,0.08,1) end)
 
 -- MODE_LABELS is declared once above the UI section.
-local MODE_ORDER={"damage","healing","interrupts","cc","ccBreaks","dispels","buffs","debuffsCast","debuffsReceived"}
+local MODE_ORDER={"damage","healing","damageTaken","deaths","interrupts","cc","ccBreaks","dispels","buffs","debuffsCast","debuffsReceived"}
 local modeMenu
 
 local modeButton=CreateFrame("Button",nil,frame)
@@ -2704,6 +3053,56 @@ while i<=MAX_ROWS do
                 x=x+1
             end
 
+        elseif D.mode=="damageTaken" then
+            tt:AddDoubleLine("Damage Taken",comma(a.damageTaken or 0),0.95,0.55,0.35,1,1,1)
+            local taken,tn=sortedTable(a.damageTakenSpells,"damage"); local tx=1
+            if tn>0 then tt:AddLine(" "); tt:AddLine("Incoming damage",1,0.82,0) end
+            while tx<=tn and tx<=10 do
+                local e=taken[tx]
+                local critPct=0
+                if (e.hits or 0)>0 then critPct=((e.crits or 0)/(e.hits or 1))*100 end
+                local right=comma(e.damage).." | "..tostring(e.hits or 0).." hits | "..string.format("%.0f%% crit",critPct)
+                if (e.crits or 0)>0 then
+                    right=right.." | "..comma(e.critDamage or 0).." crit dmg"
+                    right=right.." | max "..comma(e.maxCrit or 0)
+                end
+                if (e.overkillKnown or 0)>0 then right=right.." | "..comma(e.overkill or 0).." overkill" end
+                tt:AddDoubleLine(e.name,right,1,1,1,0.88,0.88,0.88)
+                tx=tx+1
+            end
+            if a.deathLast then
+                local dl=a.deathLast
+                tt:AddLine(" ")
+                local kb=tostring(dl.sourceName or "Unknown").." - "..tostring(dl.ability or "Unknown")
+                local kr=comma(dl.damage or 0).." dmg"
+                if dl.overkill~=nil then kr=kr.." | "..comma(dl.overkill).." overkill" end
+                if dl.crit then kr=kr.." | CRIT" end
+                tt:AddDoubleLine("Killing Blow: "..kb,kr,1,0.45,0.35,1,0.75,0.65)
+                tt:AddLine(tostring(a.name).." dies",1,0.25,0.25)
+            end
+
+        elseif D.mode=="deaths" then
+            tt:AddDoubleLine("Deaths",tostring(a.deaths or 0),1,0.35,0.35,1,1,1)
+            local causes,cn=sortedTable(a.deathCauses,"count"); local cx=1
+            if cn>0 then tt:AddLine(" "); tt:AddLine("Killing blows",1,0.82,0) end
+            while cx<=cn and cx<=8 do
+                local e=causes[cx]
+                local right=tostring(e.count or 0).."x | "..comma(e.damage or 0).." dmg"
+                if (e.overkillKnown or 0)>0 then right=right.." | "..comma(e.overkill or 0).." overkill" end
+                if (e.crits or 0)>0 then right=right.." | "..tostring(e.crits).." crit" end
+                tt:AddDoubleLine(e.name,right,1,1,1,0.88,0.88,0.88)
+                cx=cx+1
+            end
+            if a.deathLast then
+                local dl=a.deathLast
+                tt:AddLine(" ")
+                local last=tostring(dl.sourceName or "Unknown").." - "..tostring(dl.ability or "Unknown")
+                local lr=comma(dl.damage or 0).." dmg"
+                if dl.overkill~=nil then lr=lr.." | "..comma(dl.overkill).." overkill" end
+                if dl.crit then lr=lr.." | CRIT" end
+                tt:AddDoubleLine("Last death: "..last,lr,1,0.45,0.35,1,0.75,0.65)
+            end
+
         elseif D.mode=="healing" then
             local heal=actorDisplayHealing(a); local hps=0
             if dur>0 then hps=heal/dur end
@@ -2746,6 +3145,17 @@ while i<=MAX_ROWS do
             local ul,un=sortedTable(a[D.mode],"count"); local ux=1
             while ux<=un and ux<=8 do
                 tt:AddDoubleLine(ul[ux].name,tostring(ul[ux].value),1,1,1,0.86,0.86,0.86)
+                if D.mode=="ccBreaks" and a.ccBreakAbilities then
+                    local bk,bv
+                    for bk,bv in a.ccBreakAbilities do
+                        local _,_,ccName,abilityName=string.find(bk,"^(.-) | (.+)$")
+                        if ccName==ul[ux].name then
+                            local abilityDamage=0
+                            if type(bv)=="table" then abilityDamage=bv.damage or 0 end
+                            tt:AddDoubleLine("  "..tostring(abilityName),tostring(abilityDamage).." dmg",0.75,0.75,0.75,0.75,0.75,0.75)
+                        end
+                    end
+                end
                 ux=ux+1
             end
         end
@@ -2846,6 +3256,12 @@ function D.reportLineForActor(a,rank,dur)
         local value=actorDisplayDamage(a); local rate=0
         if dur>0 then rate=value/dur end
         return tostring(rank)..". "..tostring(a.name).." - "..comma(value).." ("..string.format("%.1f",rate).." DPS)"
+    elseif D.mode=="damageTaken" then
+        return tostring(rank)..". "..tostring(a.name).." - "..comma(a.damageTaken or 0).." damage taken"
+    elseif D.mode=="deaths" then
+        local line=tostring(rank)..". "..tostring(a.name).." - "..tostring(a.deaths or 0).." deaths"
+        if a.deathLast then line=line.." | last: "..tostring(a.deathLast.sourceName or "Unknown").." - "..tostring(a.deathLast.ability or "Unknown").." ("..comma(a.deathLast.damage or 0).." dmg)" end
+        return line
     elseif D.mode=="healing" then
         local value=actorDisplayHealing(a); local rate=0
         if dur>0 then rate=value/dur end
@@ -2863,6 +3279,12 @@ function D.reportTotalLine(list,count,dur)
         while i<=count do total=total+actorDisplayDamage(list[i]); i=i+1 end
         local rate=0; if dur>0 then rate=total/dur end
         return "Total: "..comma(total).." ("..string.format("%.1f",rate).." DPS)"
+    elseif D.mode=="damageTaken" then
+        while i<=count do total=total+(list[i].damageTaken or 0); i=i+1 end
+        return "Total: "..comma(total).." damage taken"
+    elseif D.mode=="deaths" then
+        while i<=count do total=total+(list[i].deaths or 0); i=i+1 end
+        return "Total deaths: "..tostring(total)
     elseif D.mode=="healing" then
         while i<=count do total=total+actorDisplayHealing(list[i]); i=i+1 end
         local rate=0; if dur>0 then rate=total/dur end
@@ -2991,6 +3413,12 @@ updateUI=function()
     elseif D.mode=="healing" then
         local total=totalHealing(); local totalHPS=0; if dur>0 then totalHPS=total/dur end
         summary:SetText("Total: "..shortNumber(total).." | "..string.format("%.1f",totalHPS).." HPS")
+    elseif D.mode=="damageTaken" then
+        local total=0; local ui=1; while ui<=count do total=total+(list[ui].damageTaken or 0); ui=ui+1 end
+        summary:SetText("Total taken: "..shortNumber(total))
+    elseif D.mode=="deaths" then
+        local total=0; local ui=1; while ui<=count do total=total+(list[ui].deaths or 0); ui=ui+1 end
+        summary:SetText("Total deaths: "..tostring(total))
     else
         if D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then
             local auraTotal=0; local ui=1
@@ -3026,6 +3454,8 @@ updateUI=function()
             row.rank:SetText(tostring(absoluteIndex).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
             if D.mode=="damage" then local dps=0; if dur>0 then dps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",dps).." DPS")
             elseif D.mode=="healing" then local hps=0; if dur>0 then hps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",hps).." HPS")
+            elseif D.mode=="damageTaken" then row.right:SetText(shortNumber(value))
+            elseif D.mode=="deaths" then row.right:SetText(tostring(value))
             elseif D.mode=="buffs" then row.right:SetText(tostring(value).." buffs")
             elseif D.mode=="debuffsCast" or D.mode=="debuffsReceived" then row.right:SetText(tostring(value).." debuffs")
             else row.right:SetText(tostring(value)) end
@@ -3052,6 +3482,12 @@ local function saveHistory() end
 local function finalizePendingCombatEnd()
     if not D.pendingCombatEndAt or D.pendingCombatEndAt<=0 then return end
     if GetTime()<D.pendingCombatEndAt then return end
+
+    if D.localPlayerDead and D.deadSyncLastReceived and D.deadSyncLastReceived>0
+        and GetTime()-D.deadSyncLastReceived<2.25 then
+        D.pendingCombatEndAt=GetTime()+0.75
+        return
+    end
 
     -- Sap and similar crowd control can be applied before WoW considers the
     -- player "in combat". Caw already opened a utility segment for the landed
@@ -3093,6 +3529,17 @@ events:SetScript("OnUpdate",function()
         finalizeSyncOfferSelection()
     end
     if table.getn(D.syncQueue)>0 then flushSyncQueue() end
+
+    -- Keep receiving the surviving group's Damage/Healing after the local
+    -- player dies. This requests a cumulative snapshot once per second.
+    if D.localPlayerDead and D.startTime and D.startTime>0 then
+        local deadNow=GetTime()
+        if deadNow>=(D.deadSyncNextRequest or 0) then
+            D.deadSyncNextRequest=deadNow+1.00
+            if requestCombatSync then requestCombatSync(true) end
+        end
+    end
+
     if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then finalizePendingCombatEnd() end
 
     -- RavenCraft/custom-client safety net: PLAYER_REGEN_ENABLED can
@@ -3107,7 +3554,18 @@ events:SetScript("OnUpdate",function()
             if UnitAffectingCombat("player") then
                 D.outOfCombatSince=0
             else
-                if not D.outOfCombatSince or D.outOfCombatSince<=0 then
+                local rosterRecent=false
+                if D.lastRosterCombatActivity and D.lastRosterCombatActivity>0
+                    and now-D.lastRosterCombatActivity<4.00 then
+                    rosterRecent=true
+                end
+                if rosterRecent then
+                    D.outOfCombatSince=0
+                    if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
+                        D.pendingCombatEndAt=0
+                        D.pendingCombatEndStopTime=0
+                    end
+                elseif not D.outOfCombatSince or D.outOfCombatSince<=0 then
                     D.outOfCombatSince=now
                 elseif now-D.outOfCombatSince>=0.50
                     and (not D.pendingCombatEndAt or D.pendingCombatEndAt<=0) then
@@ -3120,7 +3578,7 @@ events:SetScript("OnUpdate",function()
     end
 end)
 local function reg(ev) local ok=pcall(events.RegisterEvent,events,ev); if ev=="RAW_COMBATLOG" then D.rawRegistered=ok end end
-reg("ADDON_LOADED"); reg("RAW_COMBATLOG"); reg("UNIT_CASTEVENT"); reg("CHAT_MSG_ADDON"); reg("PLAYER_REGEN_DISABLED"); reg("PLAYER_REGEN_ENABLED"); reg("PLAYER_ENTERING_WORLD"); reg("PARTY_MEMBERS_CHANGED"); reg("RAID_ROSTER_UPDATE"); reg("UNIT_PET"); reg("UNIT_INVENTORY_CHANGED"); reg("PLAYER_AURAS_CHANGED"); reg("PLAYER_LOGOUT")
+reg("ADDON_LOADED"); reg("RAW_COMBATLOG"); reg("UNIT_CASTEVENT"); reg("CHAT_MSG_ADDON"); reg("CHAT_MSG_COMBAT_FRIENDLY_DEATH"); reg("PLAYER_REGEN_DISABLED"); reg("PLAYER_REGEN_ENABLED"); reg("PLAYER_ENTERING_WORLD"); reg("PARTY_MEMBERS_CHANGED"); reg("RAID_ROSTER_UPDATE"); reg("UNIT_PET"); reg("UNIT_INVENTORY_CHANGED"); reg("PLAYER_AURAS_CHANGED"); reg("PLAYER_LOGOUT")
 refreshRoster()
 events:SetScript("OnEvent",function()
     if event=="ADDON_LOADED" then
@@ -3133,6 +3591,9 @@ events:SetScript("OnEvent",function()
     elseif event=="PLAYER_AURAS_CHANGED" then
         if D.scanPlayerBuffs then D.scanPlayerBuffs(true) end
     elseif event=="PLAYER_REGEN_DISABLED" then
+        D.localPlayerDead=false
+        D.deadSyncLastReceived=0
+        D.deadSyncNextRequest=0
         D.outOfCombatSince=0
         D.combatStateCheckAt=0
         -- Re-entering combat during the short grace window means this is still
@@ -3171,9 +3632,13 @@ events:SetScript("OnEvent",function()
         updateUI()
     elseif event=="UNIT_CASTEVENT" then
         if D.handleUnitCastCC then D.handleUnitCastCC(arg1,arg2,arg3,arg4) end
+    elseif event=="CHAT_MSG_COMBAT_FRIENDLY_DEATH" then
+        if D.captureFriendlyDeath then D.captureFriendlyDeath(event,arg1) end
     elseif event=="RAW_COMBATLOG" then
         D.rawTotal=D.rawTotal+1
         captureRawDebug(arg1,arg2)
+        if D.captureIncomingDamage then D.captureIncomingDamage(arg1,arg2) end
+        if D.captureFriendlyDeath then D.captureFriendlyDeath(arg1,arg2) end
         if D.captureCCDamageCandidate then D.captureCCDamageCandidate(arg1,arg2) end
 
         -- Pre-combat long buffs must survive until the next segment starts.
@@ -3194,7 +3659,9 @@ events:SetScript("OnEvent",function()
             end
         end
 
-        parseRaw(arg1,arg2)
+        if not (D.localPlayerDead and not D.inCombat) then
+            parseRaw(arg1,arg2)
+        end
     elseif event=="CHAT_MSG_ADDON" then
         if arg1==D.syncPrefix and arg2 then
             D.syncAddonEvents=(D.syncAddonEvents or 0)+1
@@ -3216,7 +3683,7 @@ SlashCmdList["CAWDPS"]=function(msg)
     elseif msg=="current" then D.segment="current"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
     elseif msg=="last" then if D.fightHistory[1] then D.segment="history"; D.segmentIndex=1; D.scrollOffset=0; updateUI() end
     elseif msg=="overall" then D.segment="overall"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
-    elseif msg=="damage" or msg=="healing" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
+    elseif msg=="damage" or msg=="healing" or mode=="damageTaken" or mode=="deaths" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
     elseif msg=="lock" then D.locked=true; saveWindowState(); applyWindowLock(); chat("Window locked.")
     elseif msg=="unlock" then D.locked=false; saveWindowState(); applyWindowLock(); chat("Window unlocked.")
     elseif msg=="history" then
@@ -3248,6 +3715,7 @@ SlashCmdList["CAWDPSDEBUG"]=function(msg)
     chat("Caw Sync API: "..tostring(D.syncAPI or "unknown").." | last error "..tostring(D.syncLastError or "none"))
     chat("Caw Sync transport: addon events "..tostring(D.syncAddonEvents or 0).." | requests seen "..tostring(D.syncRequestsSeen or 0).." | sent "..tostring(D.syncSent or 0))
     chat("SavedVariables: "..tostring(D.savedVariablesReady).." | layout saved: "..tostring(CawDPSMeterDB and CawDPSMeterDB.layoutSaved).." | locked: "..tostring(D.locked))
+    chat("Mode: current "..tostring(D.mode).." | global "..tostring(CawDPSMeterDB and CawDPSMeterDB.mode).." | character "..tostring(CawDPSMeterCharDB and CawDPSMeterCharDB.mode))
     chat("Segment: "..tostring(D.segment).." | selected history: "..tostring(D.segmentIndex or 0).." | current target: "..tostring(currentFightLabel()).." | stored fights: "..tostring(table.getn(D.fightHistory)).." | overall fights: "..tostring(D.overallSegment and D.overallSegment.fights or 0))
     chat("Parsed hits: "..tostring(D.parsedTotal).." | last parsed: "..tostring(D.lastParsed))
     chat("Last utility: "..tostring(D.lastUtility or "none").." | ignored outsiders: "..tostring(D.ignoredOutsiders or 0))
@@ -3321,11 +3789,47 @@ SlashCmdList["CAWDPSCCDEBUG"]=function()
     if n==0 then chat("active CC: none") end
     local h=D.lastCCDamage
     if h then
-        chat("last damage: "..tostring(h.source and h.source.name or "?").." -> "..tostring(h.target).." | age "..string.format("%.2f",GetTime()-(h.time or 0)))
+        chat("last damage: "..tostring(h.source and h.source.name or "?").." -> "..tostring(h.target).." | "..tostring(h.ability or "Melee").." | "..tostring(h.amount or 0).." dmg | age "..string.format("%.2f",GetTime()-(h.time or 0)))
     else
         chat("last damage: none")
     end
+    local tk,th
+    for tk,th in D.ccDamageByTarget do
+        chat("break candidate: "..tostring(th.source and th.source.name or "?").." -> "..tostring(tk).." | "..tostring(th.ability or "Melee").." | "..tostring(th.amount or 0).." dmg | age "..string.format("%.2f",GetTime()-(th.time or 0)))
+    end
+    chat("last cast event: "..tostring(D.lastCCCastEvent or "none"))
+    chat("SpellInfo: "..tostring(D.lastCCSpellInfo or "none"))
+    chat("last landed: "..tostring(D.lastCCLanded or "none"))
+    chat("segment on land: "..tostring(D.lastCCSegmentOpen or "none"))
     chat("last break: "..tostring(D.lastCCBreak or "none"))
+end
+
+SLASH_CAWDPSDEATHDEBUG1="/cddeath"
+SlashCmdList["CAWDPSDEATHDEBUG"]=function()
+    chat("Damage Taken / Death debug:")
+    chat("last death RAW: "..tostring(D.lastDeathRaw or "none"))
+    chat("last death record: "..tostring(D.lastDeathRecord or "none"))
+    local activityAge="none"
+    if D.lastRosterCombatActivity and D.lastRosterCombatActivity>0 then activityAge=string.format("%.2f",GetTime()-D.lastRosterCombatActivity) end
+    chat("last roster combat activity age: "..tostring(activityAge))
+    chat("local player dead freeze: "..tostring(D.localPlayerDead and true or false).." | inCombat "..tostring(D.inCombat and true or false).." | start "..tostring(D.startTime or 0))
+    local deadSyncAge="none"
+    if D.deadSyncLastReceived and D.deadSyncLastReceived>0 then deadSyncAge=string.format("%.2f",GetTime()-D.deadSyncLastReceived) end
+    chat("dead-client sync age: "..tostring(deadSyncAge).." | next request "..tostring(D.deadSyncNextRequest or 0))
+    local selfHit=D.lastSelfIncomingDamage
+    if selfHit then
+        chat("self incoming: "..tostring(selfHit.sourceName).." | "..tostring(selfHit.ability).." | "..tostring(selfHit.amount).." dmg | age "..string.format("%.2f",GetTime()-(selfHit.time or 0)))
+    else
+        chat("self incoming: none")
+    end
+    local key,hit
+    local n=0
+    for key,hit in D.lastIncomingDamage do
+        n=n+1
+        chat("incoming "..tostring(key).." | "..tostring(hit.sourceName or hit.sourceGuid or "?").." | "..tostring(hit.ability or "?").." | "..tostring(hit.amount or 0).." dmg | crit "..tostring(hit.crit and true or false).." | overkill "..tostring(hit.overkill))
+        if n>=20 then chat("... output capped at 20 entries"); break end
+    end
+    if n==0 then chat("incoming: none") end
 end
 
 SLASH_CAWDPSGROUPAURADEBUG1="/cdgroupscan"
