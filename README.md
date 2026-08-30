@@ -79,8 +79,10 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 
 ## Support
 
-If the addon is useful to you and you want to chip in, there is a Sponsor
-button at the top of this repository.
+Caw DPS Meter is free. If it is useful to you and you want to chip in, there is
+a Sponsor button at the top of this repository, or:
+
+[![Support on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/huginnandmuginn)
 
 ## Contributing
 
