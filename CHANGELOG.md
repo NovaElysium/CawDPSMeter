@@ -3,6 +3,30 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-08-30
+
+Combat-end rework. Please report a fight that still ends late or merges by
+running `/cdlog on`, reproducing it, then `/cdlog save`, `/reload`, and
+attaching the `CawDPSMeter.lua` from your `WTF/Account/<name>/SavedVariables`
+folder to the issue.
+
+### Fixed
+- A crowd-control target that dies while still controlled no longer blocks
+  combat end. The control state is dropped as soon as the target dies.
+- Hard ceiling on the combat-end grace: the fight now always closes within a
+  few seconds of the player leaving combat, even if a control entry is stuck.
+- Re-entering combat only merges with the previous fight if the grace was
+  scheduled less than 1.5 s earlier (a real combat-state flicker). A longer
+  gap starts a new segment.
+- The displayed duration freezes when combat ends, so DPS and HPS no longer
+  visibly decay during the grace window.
+- Group activity in the first seconds after your fight ends (a healer topping
+  the tank off, for example) no longer spawns a phantom fight in the history.
+
+### Added
+- `/cdlog` diagnostic log for the combat-end lifecycle. Off by default.
+  `on` / `off` / `dump [n]` / `save` / `clear`.
+
 ## [1.0.1] - 2026-08-30
 
 ### Fixed

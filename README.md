@@ -89,6 +89,18 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 Chat reports (Say / Party / Raid / Guild) go through the **Report** button in
 the window, not a slash command.
 
+## Reporting a bug
+
+For a fight that ends late, merges with another, or shows wrong numbers:
+
+1. `/cdlog on`
+2. Reproduce it (a few pulls).
+3. `/cdlog save`, then `/reload`.
+4. Open an [issue](../../issues) and attach the `CawDPSMeter.lua` from your
+   `WTF\Account\<name>\SavedVariables\` folder.
+
+The log records only the combat-end lifecycle and is off unless you turn it on.
+
 ## Support
 
 Caw DPS Meter is free. If it is useful to you and you want to chip in, there is

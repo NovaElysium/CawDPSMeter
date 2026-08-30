@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.1 Combat End Fix
+-- Caw DPS Meter v1.0.2 Combat End Rework
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.1"
+D.version = "1.0.2"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -329,7 +329,46 @@ D.syncRejectedSources = 0
 -- final reconciliation snapshot before the fight is committed.
 D.pendingCombatEndAt = 0
 D.pendingCombatEndStopTime = 0
+D.pendingCombatEndFirstAt = 0
+D.lastFinalizeAt = 0
 D.combatEndGrace = 1.50
+-- Never let a stuck crowd-control entry hold the fight open longer than
+-- grace + this many seconds past the moment the player actually left combat.
+D.combatEndHardCap = 4.0
+
+-- === Local diagnostic log =================================================
+-- Off by default. Never committed or shipped. Toggle/export with /cdlog.
+-- Traces the combat-end lifecycle so a mis-timed fight boundary can be seen.
+D.logEnabled = false
+D.log = {}
+D.logMax = 800
+D.logSeq = 0
+D.logStart = 0
+D.logLine = function(cat, text)
+    if not D.logEnabled then return end
+    local now = GetTime()
+    if D.logStart == 0 then D.logStart = now end
+    D.logSeq = D.logSeq + 1
+    table.insert(D.log, {seq=D.logSeq, rel=now-D.logStart, cat=tostring(cat or "?"), text=tostring(text or "")})
+    while table.getn(D.log) > D.logMax do table.remove(D.log, 1) end
+end
+D.logState = function(tag)
+    if not D.logEnabled then return end
+    local uac = "?"
+    if UnitAffectingCombat then local ok,v=pcall(UnitAffectingCombat,"player"); if ok then uac=(v and "1" or "0") end end
+    local grace = 0
+    if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then grace=D.pendingCombatEndAt-GetTime() end
+    local nCC=0; local kk,vv; for kk,vv in D.activeCC do nCC=nCC+1 end
+    local rAge=-1; if D.lastRosterCombatActivity and D.lastRosterCombatActivity>0 then rAge=GetTime()-D.lastRosterCombatActivity end
+    D.logLine("state", tostring(tag)
+        .." inCombat="..tostring(D.inCombat and 1 or 0)
+        .." uac="..uac
+        .." pendingEnd="..string.format("%.2f", grace)
+        .." rosterAge="..string.format("%.2f", rAge)
+        .." activeCC="..tostring(nCC)
+        .." dead="..tostring(D.localPlayerDead and 1 or 0))
+end
+-- =========================================================================
 
 local requestCombatSync = nil
 local finalizeSyncOfferSelection = nil
@@ -469,7 +508,16 @@ end
 local function clearTable(t) local k; for k in t do t[k] = nil end end
 local function currentFightDuration()
     if D.startTime == 0 then return D.lastDuration or 0 end
-    if D.inCombat then local t=GetTime()-D.startTime; if t<0 then t=0 end; return t end
+    if D.inCombat then
+        -- Once a grace close is scheduled the fight is over for display: freeze
+        -- the duration at the moment combat actually ended so DPS/HPS stop
+        -- decaying while the grace window and trailing reconciliation run.
+        if D.pendingCombatEndAt and D.pendingCombatEndAt>0
+            and D.pendingCombatEndStopTime and D.pendingCombatEndStopTime>D.startTime then
+            return D.pendingCombatEndStopTime-D.startTime
+        end
+        local t=GetTime()-D.startTime; if t<0 then t=0 end; return t
+    end
     return D.lastDuration or 0
 end
 local function getSelectedHistoryFight()
@@ -628,7 +676,7 @@ local function resetFight()
     D.syncNonce=nil; D.syncRequested=false; D.syncRequestSent=false; D.syncReceived=0; D.syncLastSource="none"; D.syncBestAge=0
     D.syncLastError="none"; D.syncLastChannel="none"
     D.syncOffers={}; D.syncOfferDeadline=0; D.syncSelectedSource=nil; D.syncIncoming=nil; D.syncRejectedSources=0
-    D.pendingCombatEndAt=0; D.pendingCombatEndStopTime=0
+    D.pendingCombatEndAt=0; D.pendingCombatEndStopTime=0; D.pendingCombatEndFirstAt=0
 end
 local function ensureStarted()
     -- A roster damage/heal event can arrive before this client receives
@@ -636,16 +684,36 @@ local function ensureStarted()
     -- start a fresh segment *before* counting this first RAW event.
     local opened=false
     if not D.inCombat then
+        -- Do not spawn a phantom segment from group activity in the first
+        -- seconds after the local player's fight ended. The healer topping the
+        -- tank off right after a pull is the common case. A genuine next pull
+        -- re-arms through PLAYER_REGEN_DISABLED, or once the local player is
+        -- actually fighting again.
+        if D.lastFinalizeAt and D.lastFinalizeAt>0 and GetTime()-D.lastFinalizeAt<3.0 then
+            local playerOOC=false
+            if UnitAffectingCombat then local ok,v=pcall(UnitAffectingCombat,"player"); if ok and not v then playerOOC=true end end
+            -- A SELF event means the local player is the one acting/being hit:
+            -- they are engaging, the combat flag just has not flipped yet. Only
+            -- suppress pure group/creature activity.
+            local selfEvent=D.currentRawEv and string.find(D.currentRawEv,"SELF",1,true)
+            if playerOOC and not selfEvent then
+                D.logLine("seg","ensureStarted SUPPRESSED (<3s after finalize, player OOC) via "..tostring(D.currentRawEv or "?"))
+                return false
+            end
+        end
+        D.logLine("seg","ensureStarted OPEN (was closed) via "..tostring(D.currentRawEv or "?").." | "..tostring(D.currentRawText or ""))
         resetFight()
         D.inCombat=true
         D.startTime=GetTime()
         opened=true
         if D.seedActiveRosterBuffs then D.seedActiveRosterBuffs() end
     elseif D.startTime==0 then
+        D.logLine("seg","ensureStarted set startTime (inCombat, start 0) via "..tostring(D.currentRawEv or "?"))
         D.startTime=GetTime()
         opened=true
     end
     if opened and requestCombatSync then requestCombatSync() end
+    return true
 end
 local function addSpell(a,spell,amount,crit)
     spell=spell or "Melee"; local s=a.spells[spell]
@@ -653,7 +721,8 @@ local function addSpell(a,spell,amount,crit)
     s.damage=s.damage+amount; s.hits=s.hits+1; if crit then s.crits=s.crits+1 end
 end
 local function addDamage(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
-    amount=tonumber(amount); if not amount or amount<=0 then return false end; ensureStarted()
+    amount=tonumber(amount); if not amount or amount<=0 then return false end
+    if not ensureStarted() then return false end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.damage=a.damage+amount; a.hits=a.hits+1; if crit then a.crits=a.crits+1 end
     addSpell(a,spell,amount,crit); D.parsedTotal=D.parsedTotal+1
@@ -668,7 +737,8 @@ local function addHealSpell(a,spell,amount,crit)
     h.healing=h.healing+amount; h.hits=h.hits+1; if crit then h.crits=h.crits+1 end
 end
 local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
-    amount=tonumber(amount); if not amount or amount<=0 then return false end; ensureStarted()
+    amount=tonumber(amount); if not amount or amount<=0 then return false end
+    if not ensureStarted() then return false end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.healing=a.healing+amount; a.heals=a.heals+1; if crit then a.healCrits=a.healCrits+1 end
     addHealSpell(a,spell,amount,crit); D.parsedTotal=D.parsedTotal+1
@@ -1367,7 +1437,7 @@ D.captureIncomingDamage = function(ev,text)
     -- Group members can be observed taking damage even when this client never
     -- enters personal combat. That incoming roster damage is valid encounter
     -- activity and may open the segment while the local player is alive.
-    ensureStarted()
+    if not ensureStarted() then return false end
     D.lastRosterCombatActivity=GetTime()
 
     local actor=utilityActor(targetInfo)
@@ -1420,6 +1490,22 @@ D.captureIncomingDamage = function(ev,text)
         D.lastSelfIncomingDamage=hit
     end
     return true
+end
+
+-- An enemy dying is often the last time we ever hear about its GUID. Drop any
+-- control / cast state bound to it so a CC whose "fades from" line never
+-- arrives (target killed while stunned) cannot block combat end.
+D.clearDeadEnemyState = function(ev,text)
+    if not text then return end
+    local _,_,guid=string.find(text,"^(0x[%x]+) dies%.$")
+    if not guid then return end
+    if D.guidToActor and D.guidToActor[guid] then return end
+    if D.activeCC[guid] then
+        D.logLine("cc","enemy died, purging CC "..tostring(D.activeCC[guid].spell).." on "..tostring(guid))
+        D.activeCC[guid]=nil
+    end
+    if D.ccDamageByTarget then D.ccDamageByTarget[guid]=nil end
+    if D.activeEnemyCasts then D.activeEnemyCasts[guid]=nil end
 end
 
 D.captureFriendlyDeath = function(ev,text)
@@ -2054,6 +2140,7 @@ local function parseUtility(ev,text)
             if CC_SPELLS[spell] then
                 addCount(sa.cc,spell,1)
                 D.activeCC[target]={spell=spell,sourceKey=sa.key,time=GetTime()}
+                D.logLine("cc","CC landed "..tostring(spell).." on "..tostring(target).." by "..tostring(sa.name))
                 D.lastCCLanded=spell.." | "..target.." | "..sa.name
                 D.lastCCSegmentOpen="inCombat="..tostring(D.inCombat).." | start="..tostring(D.startTime)
             end
@@ -2105,6 +2192,7 @@ local function parseUtility(ev,text)
                     D.lastCCBreak="Global | "..spell.." | "..breakAbility.." | "..target
                 end
             end
+            D.logLine("cc","CC cleared (fade) "..tostring(spell).." on "..tostring(target))
             D.activeCC[target]=nil
             D.ccDamageByTarget[target]=nil
         end
@@ -2232,7 +2320,8 @@ end
 local function snapshotFinishedFight()
     local total=0; local k,a
     for k,a in D.actors do total=total+(a.damage or 0)+(a.healing or 0)+(a.damageTaken or 0)+(a.deaths or 0) end
-    if total<=0 then return end
+    if total<=0 then D.logLine("hist","snapshotFinishedFight SKIPPED (total 0)"); return end
+    D.logLine("hist","snapshotFinishedFight '"..tostring(currentFightLabel()).."' dur="..string.format("%.2f",D.lastDuration or 0))
     local entry={
         actors=deepCopyTable(D.actors),
         duration=D.lastDuration or 0,
@@ -3512,9 +3601,18 @@ local function finalizePendingCombatEnd()
     if not D.pendingCombatEndAt or D.pendingCombatEndAt<=0 then return end
     if GetTime()<D.pendingCombatEndAt then return end
 
+    if not D.pendingCombatEndFirstAt or D.pendingCombatEndFirstAt<=0 then
+        D.pendingCombatEndFirstAt=(D.pendingCombatEndStopTime and D.pendingCombatEndStopTime>0) and D.pendingCombatEndStopTime or GetTime()
+    end
+    -- Hard ceiling: once the player has been out of combat for grace + hardcap
+    -- seconds, close the fight no matter what a stuck CC entry claims. Dead-sync
+    -- is exempt (the player is dead and still wants the group's final numbers).
+    local hardCapHit=(GetTime()-D.pendingCombatEndFirstAt) > ((D.combatEndGrace or 1.5)+(D.combatEndHardCap or 4.0))
+
     if D.localPlayerDead and D.deadSyncLastReceived and D.deadSyncLastReceived>0
         and GetTime()-D.deadSyncLastReceived<2.25 then
         D.pendingCombatEndAt=GetTime()+0.75
+        D.logLine("end","finalize DEFER dead-sync recent ("..string.format("%.2f",GetTime()-D.deadSyncLastReceived).."s) -> +0.75")
         return
     end
 
@@ -3529,16 +3627,22 @@ local function finalizePendingCombatEnd()
     local ccTarget,ccData
     local ccActive=false
     for ccTarget,ccData in D.activeCC do
-        if ccData and ccData.time and GetTime()-ccData.time<=90 then
+        if ccData and ccData.time and GetTime()-ccData.time<=25 then
             ccActive=true
         elseif ccData then
+            D.logLine("cc","stale activeCC purged at finalize: "..tostring(ccData.spell).." on "..tostring(ccTarget).." (age "..string.format("%.1f",ccData.time and (GetTime()-ccData.time) or -1).."s)")
             D.activeCC[ccTarget]=nil
             if D.ccDamageByTarget then D.ccDamageByTarget[ccTarget]=nil end
         end
     end
-    if ccActive then
+    if ccActive and not hardCapHit then
         D.pendingCombatEndAt=GetTime()+0.50
+        D.logLine("end","finalize DEFER activeCC not empty -> +0.50")
         return
+    end
+    if ccActive and hardCapHit then
+        D.logLine("end","finalize FORCED past active CC (hard cap "..string.format("%.1f",(D.combatEndGrace or 1.5)+(D.combatEndHardCap or 4.0)).."s reached)")
+        clearTable(D.activeCC); clearTable(D.ccDamageByTarget)
     end
 
     local stopTime=D.pendingCombatEndStopTime
@@ -3548,10 +3652,13 @@ local function finalizePendingCombatEnd()
         D.lastDuration=stopTime-D.startTime
         if D.lastDuration<0 then D.lastDuration=0 end
     end
+    D.logLine("end","finalize DONE dur="..string.format("%.2f",(D.startTime>0) and (stopTime-D.startTime) or 0))
     finalizeAuraTimers(stopTime)
     D.inCombat=false
+    D.lastFinalizeAt=GetTime()
     D.pendingCombatEndAt=0
     D.pendingCombatEndStopTime=0
+    D.pendingCombatEndFirstAt=0
     snapshotFinishedFight()
     D.startTime=0
     saveHistory()
@@ -3614,11 +3721,17 @@ events:SetScript("OnUpdate",function()
                     -- Group still active and nothing scheduled yet: hold off so a
                     -- brief personal combat drop mid-encounter does not split it.
                     D.outOfCombatSince=0
+                    if not D.lastRosterHoldLog or now-D.lastRosterHoldLog>1.0 then
+                        D.lastRosterHoldLog=now
+                        D.logLine("net","HOLD player OOC, no grace scheduled, roster active "..string.format("%.2f",now-D.lastRosterCombatActivity).."s ago")
+                    end
                 elseif not D.outOfCombatSince or D.outOfCombatSince<=0 then
                     D.outOfCombatSince=now
                 elseif now-D.outOfCombatSince>=0.50 then
                     D.pendingCombatEndStopTime=D.outOfCombatSince
                     D.pendingCombatEndAt=now+(D.combatEndGrace or 1.50)
+                    if not D.pendingCombatEndFirstAt or D.pendingCombatEndFirstAt<=0 then D.pendingCombatEndFirstAt=D.outOfCombatSince end
+                    D.logLine("net","FALLBACK PLAYER_REGEN_ENABLED missed, scheduling grace close +"..string.format("%.2f",D.combatEndGrace or 1.5))
                     if requestCombatSync then requestCombatSync(true) end
                 end
             end
@@ -3639,6 +3752,7 @@ events:SetScript("OnEvent",function()
     elseif event=="PLAYER_AURAS_CHANGED" then
         if D.scanPlayerBuffs then D.scanPlayerBuffs(true) end
     elseif event=="PLAYER_REGEN_DISABLED" then
+        D.logState("REGEN_DISABLED (enter combat)")
         D.localPlayerDead=false
         D.deadSyncLastReceived=0
         D.deadSyncNextRequest=0
@@ -3647,8 +3761,22 @@ events:SetScript("OnEvent",function()
         -- Re-entering combat during the short grace window means this is still
         -- the same encounter; cancel the pending close instead of resetting.
         if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
-            D.pendingCombatEndAt=0
-            D.pendingCombatEndStopTime=0
+            local graceAge=(D.pendingCombatEndFirstAt and D.pendingCombatEndFirstAt>0) and (GetTime()-D.pendingCombatEndFirstAt) or 0
+            if graceAge<=1.5 then
+                D.logLine("regen","REGEN_DISABLED cancelled fresh grace (age "..string.format("%.2f",graceAge).."s) -> same fight")
+                D.pendingCombatEndAt=0
+                D.pendingCombatEndStopTime=0
+                D.pendingCombatEndFirstAt=0
+            else
+                -- The grace has been pending far longer than its window: the
+                -- prior fight's close was being blocked (stuck CC / dead-sync).
+                -- The player is genuinely re-entering combat now, so force the
+                -- prior fight closed and let a fresh segment open below.
+                D.logLine("regen","REGEN_DISABLED stale grace (age "..string.format("%.2f",graceAge).."s) -> force-close prior fight")
+                clearTable(D.activeCC); clearTable(D.ccDamageByTarget)
+                D.pendingCombatEndAt=GetTime()-0.01
+                finalizePendingCombatEnd()
+            end
         end
 
         -- RAW_COMBATLOG can reach us before this client fires PLAYER_REGEN_DISABLED.
@@ -3662,12 +3790,21 @@ events:SetScript("OnEvent",function()
             opened=true
         end
         if opened then
+            D.logLine("seg","REGEN_DISABLED opened a NEW segment")
             if D.seedActiveRosterBuffs then D.seedActiveRosterBuffs() end
             if requestCombatSync then requestCombatSync() end
+        else
+            local segAge=(D.startTime and D.startTime>0) and (GetTime()-D.startTime) or -1
+            if segAge>=0 and segAge<1.5 then
+                D.logLine("seg","REGEN_DISABLED: segment already opened "..string.format("%.2f",segAge).."s ago by RAW, kept")
+            else
+                D.logLine("seg","REGEN_DISABLED: kept running segment (age "..string.format("%.2f",segAge).."s) = flicker within grace")
+            end
         end
         D.segment="current"; D.segmentIndex=0; D.scrollOffset=0
         updateUI()
     elseif event=="PLAYER_REGEN_ENABLED" then
+        D.logState("REGEN_ENABLED (leave combat)")
         D.outOfCombatSince=GetTime()
         D.combatStateCheckAt=0
         -- Keep the current fight alive briefly. During this window Caw performs
@@ -3676,6 +3813,8 @@ events:SetScript("OnEvent",function()
         local stopTime=GetTime()
         D.pendingCombatEndStopTime=stopTime
         D.pendingCombatEndAt=stopTime+(D.combatEndGrace or 1.50)
+        if not D.pendingCombatEndFirstAt or D.pendingCombatEndFirstAt<=0 then D.pendingCombatEndFirstAt=stopTime end
+        D.logLine("regen","REGEN_ENABLED scheduled grace close +"..string.format("%.2f",D.combatEndGrace or 1.5))
         if requestCombatSync then requestCombatSync(true) end
         updateUI()
     elseif event=="UNIT_CASTEVENT" then
@@ -3684,9 +3823,11 @@ events:SetScript("OnEvent",function()
         if D.captureFriendlyDeath then D.captureFriendlyDeath(event,arg1) end
     elseif event=="RAW_COMBATLOG" then
         D.rawTotal=D.rawTotal+1
+        D.currentRawEv=arg1; D.currentRawText=arg2
         captureRawDebug(arg1,arg2)
         if D.captureIncomingDamage then D.captureIncomingDamage(arg1,arg2) end
         if D.captureFriendlyDeath then D.captureFriendlyDeath(arg1,arg2) end
+        if D.clearDeadEnemyState then D.clearDeadEnemyState(arg1,arg2) end
         if D.captureCCDamageCandidate then D.captureCCDamageCandidate(arg1,arg2) end
 
         -- Pre-combat long buffs must survive until the next segment starts.
@@ -3721,6 +3862,46 @@ events:SetScript("OnEvent",function()
 end)
 
 -- Commands -----------------------------------------------------------------
+
+-- Local diagnostic log control. Not shipped.
+SLASH_CAWDPSLOG1="/cdlog"
+SlashCmdList["CAWDPSLOG"]=function(msg)
+    msg=string.lower(tostring(msg or ""))
+    if msg=="on" then
+        D.logEnabled=true; D.log={}; D.logSeq=0; D.logStart=0
+        chat("|cff7fbf4dlog ON|r (cleared). Do your pulls, then /cdlog save + /reload, or /cdlog dump.")
+    elseif msg=="off" then
+        D.logEnabled=false
+        chat("log OFF ("..tostring(table.getn(D.log)).." lines kept in memory)")
+    elseif msg=="clear" then
+        D.log={}; D.logSeq=0; D.logStart=0
+        chat("log cleared")
+    elseif string.find(msg,"^dump") then
+        local _,_,num=string.find(msg,"^dump%s*(%d+)")
+        local n=tonumber(num) or 60
+        local total=table.getn(D.log)
+        local from=total-n+1; if from<1 then from=1 end
+        chat("--- log "..tostring(from).."-"..tostring(total).." of "..tostring(total).." ---")
+        local i=from
+        while i<=total do
+            local e=D.log[i]
+            if e then chat(string.format("%4d %8.2f [%-5s] %s", e.seq or 0, e.rel or 0, e.cat or "?", e.text or "")) end
+            i=i+1
+        end
+        chat("--- end ---")
+    elseif msg=="save" then
+        CawDPSMeterLog={
+            savedAt=(date and date("%Y-%m-%d %H:%M:%S")) or "",
+            version=D.version,
+            count=table.getn(D.log),
+            lines=D.log
+        }
+        chat("saved to CawDPSMeterLog ("..tostring(table.getn(D.log)).." lines). /reload now, then send me the file.")
+    else
+        chat("/cdlog on | off | clear | dump [n] | save   (state: "..(D.logEnabled and "ON" or "OFF")..", "..tostring(table.getn(D.log)).." lines)")
+    end
+end
+
 SLASH_CAWDPS1="/cawdps"
 SLASH_CAWDPS2="/cd"
 SlashCmdList["CAWDPS"]=function(msg)
