@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FNovaElysium%2FCaw-DPS-Meter%2Fmain%2FCawDPSMeter.toc&search=%23%23%20Version%3A%20%28.%2B%29&replace=%241&label=version&color=7fbf4d" alt="Version">
+  <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FNovaElysium%2FCawDPSMeter%2Fmain%2FCawDPSMeter.toc&search=%23%23%20Version%3A%20%28.%2B%29&replace=%241&label=version&color=7fbf4d" alt="Version">
   <img src="https://img.shields.io/badge/WoW-1.12%20(Vanilla)-1f6feb" alt="WoW 1.12">
   <img src="https://img.shields.io/badge/license-MIT-3fb950" alt="MIT License">
   <img src="https://img.shields.io/badge/requires-SuperWoW%20%2B%20SuperAPI-d29922" alt="Requires SuperWoW + SuperAPI">
@@ -54,7 +54,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 1. Download the latest **[release](../../releases)** ZIP.
 2. Extract it so the folder is exactly:
    `<WoW>\Interface\AddOns\CawDPSMeter\`
-   (the folder must be named `CawDPSMeter`, not `Caw-DPS-Meter-main`).
+   (the folder must be named `CawDPSMeter`, not `CawDPSMeter-main`).
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
 4. Restart the client or `/reload`, then type `/cd`.
 
