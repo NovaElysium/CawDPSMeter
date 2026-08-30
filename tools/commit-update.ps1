@@ -57,7 +57,7 @@ else {
 # --- 2. rebuild the managed metadata block ------------------------------------
 $meta = @()
 if ($version) { $meta += "## Version: $version" }
-$meta += '## Author: NovaElysium, CawDPSMeter'
+$meta += '## Author: Huginn & Muninn'
 $meta += '## X-License: MIT'
 $meta += '## X-Website: https://github.com/NovaElysium/Caw-DPS-Meter'
 

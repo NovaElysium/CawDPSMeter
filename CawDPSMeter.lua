@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.1 Stability RC54 Self Killing Blow Fix
+-- Caw DPS Meter v1.0.1 Stability RC55 Release Audit Fixes
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.1-rc54"
+D.version = "1.0.1-rc55"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -1422,6 +1422,7 @@ end
 
 D.captureFriendlyDeath = function(ev,text)
     if not text or text=="" then return false end
+    if not string.find(text,"die",1,true) and not string.find(text,"dies",1,true) then return false end
 
     local targetInfo=nil
     local targetGuid=nil
@@ -1432,7 +1433,7 @@ D.captureFriendlyDeath = function(ev,text)
     if string.find(text,"^You die%.$") or string.find(text,"^You have died%.$") then
         selfDeath=true
         D.localPlayerDead=true
-        D.deadSyncLastReceived=GetTime()
+        D.deadSyncLastReceived=0
         D.deadSyncNextRequest=GetTime()
         targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
     else
@@ -1451,6 +1452,10 @@ D.captureFriendlyDeath = function(ev,text)
     end
 
     if not targetInfo or targetInfo.isPet then return false end
+    if D.localPlayerDead and not selfDeath
+        and (not D.inCombat or not D.startTime or D.startTime<=0) then
+        return false
+    end
     if not D.inCombat or not D.startTime or D.startTime<=0 then ensureStarted() end
     D.lastRosterCombatActivity=GetTime()
 
@@ -1502,7 +1507,7 @@ D.captureFriendlyDeath = function(ev,text)
 
     -- If combat end is already pending, give this late death event time to
     -- be committed into the same segment before snapshot/finalization.
-    if D.pendingCombatEnd then
+    if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
         local minEnd=now+0.50
         if not D.pendingCombatEndAt or D.pendingCombatEndAt<minEnd then D.pendingCombatEndAt=minEnd end
     end
@@ -2164,7 +2169,7 @@ local function deepCopyTable(src)
     if type(src)~="table" then return src end
     local dst={}; local k,v
     for k,v in src do
-        if k~="debuffs" then
+        if k~="debuffs" and k~="_cawDisplayValue" then
             if type(v)=="table" then dst[k]=deepCopyTable(v) else dst[k]=v end
         end
     end
@@ -2176,9 +2181,13 @@ local function mergeNumericTable(dst,src)
     if not src then return end
     local k,v
     for k,v in src do
-        if k~="active" and k~="debuffs" and k~="deathLast" then
+        if k~="active" and k~="debuffs" and k~="deathLast" and k~="_cawDisplayValue" then
             if type(v)=="number" then
-                dst[k]=(dst[k] or 0)+v
+                if k=="maxCrit" then
+                    if v>(dst[k] or 0) then dst[k]=v end
+                else
+                    dst[k]=(dst[k] or 0)+v
+                end
             elseif type(v)=="table" then
                 if not dst[k] then dst[k]={} end
                 mergeNumericTable(dst[k],v)
@@ -3531,12 +3540,18 @@ events:SetScript("OnUpdate",function()
     if table.getn(D.syncQueue)>0 then flushSyncQueue() end
 
     -- Keep receiving the surviving group's Damage/Healing after the local
-    -- player dies. This requests a cumulative snapshot once per second.
+    -- player dies. Use a lower-frequency cumulative snapshot so multiple dead
+    -- Caw clients do not create a 1 Hz snapshot storm in a raid. PARTY/RAID
+    -- transport is retained for Vanilla/RavenCraft compatibility.
     if D.localPlayerDead and D.startTime and D.startTime>0 then
         local deadNow=GetTime()
         if deadNow>=(D.deadSyncNextRequest or 0) then
-            D.deadSyncNextRequest=deadNow+1.00
-            if requestCombatSync then requestCombatSync(true) end
+            local lastAge=999
+            if D.deadSyncLastReceived and D.deadSyncLastReceived>0 then
+                lastAge=deadNow-D.deadSyncLastReceived
+            end
+            D.deadSyncNextRequest=deadNow+2.25
+            if lastAge>=1.75 and requestCombatSync then requestCombatSync(true) end
         end
     end
 
@@ -3683,7 +3698,7 @@ SlashCmdList["CAWDPS"]=function(msg)
     elseif msg=="current" then D.segment="current"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
     elseif msg=="last" then if D.fightHistory[1] then D.segment="history"; D.segmentIndex=1; D.scrollOffset=0; updateUI() end
     elseif msg=="overall" then D.segment="overall"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
-    elseif msg=="damage" or msg=="healing" or mode=="damageTaken" or mode=="deaths" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
+    elseif msg=="damage" or msg=="healing" or msg=="damageTaken" or msg=="deaths" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
     elseif msg=="lock" then D.locked=true; saveWindowState(); applyWindowLock(); chat("Window locked.")
     elseif msg=="unlock" then D.locked=false; saveWindowState(); applyWindowLock(); chat("Window unlocked.")
     elseif msg=="history" then
