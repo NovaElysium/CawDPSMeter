@@ -30,3 +30,6 @@ dist/
 *.tmp
 scratch/
 NOTES.local.md
+
+# --- Local maintainer scripts (kept on disk, not published) ---
+tools/
