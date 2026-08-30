@@ -3523,12 +3523,22 @@ local function finalizePendingCombatEnd()
     -- CC, so do not close that segment while the CC is still active. Otherwise
     -- the later damage event would start a fresh segment and the recorded Sap
     -- would appear to vanish exactly when it was broken.
+    -- Guard against stale entries: if the CC target dies while controlled, or
+    -- the client never emits the fade/break line, the entry would otherwise
+    -- block every combat end until the next resetFight().
     local ccTarget,ccData
+    local ccActive=false
     for ccTarget,ccData in D.activeCC do
-        if ccData then
-            D.pendingCombatEndAt=GetTime()+0.50
-            return
+        if ccData and ccData.time and GetTime()-ccData.time<=90 then
+            ccActive=true
+        elseif ccData then
+            D.activeCC[ccTarget]=nil
+            if D.ccDamageByTarget then D.ccDamageByTarget[ccTarget]=nil end
         end
+    end
+    if ccActive then
+        D.pendingCombatEndAt=GetTime()+0.50
+        return
     end
 
     local stopTime=D.pendingCombatEndStopTime
@@ -3594,16 +3604,19 @@ events:SetScript("OnUpdate",function()
                     and now-D.lastRosterCombatActivity<4.00 then
                     rosterRecent=true
                 end
-                if rosterRecent then
+                if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
+                    -- A grace close is already scheduled, normally by
+                    -- PLAYER_REGEN_ENABLED. Let it run: the local player has left
+                    -- combat and their segment must end even while the rest of the
+                    -- group is still fighting. Re-entering combat is handled by
+                    -- PLAYER_REGEN_DISABLED, which cancels this.
+                elseif rosterRecent then
+                    -- Group still active and nothing scheduled yet: hold off so a
+                    -- brief personal combat drop mid-encounter does not split it.
                     D.outOfCombatSince=0
-                    if D.pendingCombatEndAt and D.pendingCombatEndAt>0 then
-                        D.pendingCombatEndAt=0
-                        D.pendingCombatEndStopTime=0
-                    end
                 elseif not D.outOfCombatSince or D.outOfCombatSince<=0 then
                     D.outOfCombatSince=now
-                elseif now-D.outOfCombatSince>=0.50
-                    and (not D.pendingCombatEndAt or D.pendingCombatEndAt<=0) then
+                elseif now-D.outOfCombatSince>=0.50 then
                     D.pendingCombatEndStopTime=D.outOfCombatSince
                     D.pendingCombatEndAt=now+(D.combatEndGrace or 1.50)
                     if requestCombatSync then requestCombatSync(true) end
