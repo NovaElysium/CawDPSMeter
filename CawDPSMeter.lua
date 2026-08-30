@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.3 Window Position Fix
+-- Caw DPS Meter v1.0.2 Combat End Rework
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.3"
+D.version = "1.0.2"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -2441,7 +2441,9 @@ local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",damageTaken="Da
 -- UI -----------------------------------------------------------------------
 local frame=CreateFrame("Frame","CawDPSMeterWindow",UIParent); D.window=frame
 frame:SetWidth(440); frame:SetHeight(260); frame:EnableMouse(true)
-if frame.SetClampedToScreen then pcall(frame.SetClampedToScreen,frame,true) end
+-- Do not call SetClampedToScreen on this custom 1.12 client.
+-- Native frame-clamping has caused ACCESS_VIOLATION crashes while dragging on some builds;
+-- Caw clamps manually after the drag instead.
 -- The window must be movable/resizable before any drag handler can ever run.
 -- Do this during base-frame creation; applyWindowLock later only toggles it.
 if frame.SetMovable then frame:SetMovable(true) end
@@ -2456,7 +2458,8 @@ D.layoutRestored=false
 local function layoutIsValid(t)
     if not t then return false end
     if t.layoutSaved and t.width and t.height then
-        if (t.left ~= nil and t.top ~= nil) or (t.point and t.x ~= nil and t.y ~= nil) then return true end
+        if (t.layoutVersion and t.layoutVersion>=4 and t.centerX ~= nil and t.centerY ~= nil)
+            or (t.left ~= nil and t.top ~= nil) or (t.point and t.x ~= nil and t.y ~= nil) then return true end
     end
     -- Accept pre-v1.13 settings as a migration source as well.
     if t.width and t.height and ((t.left ~= nil and t.top ~= nil) or (t.point and t.x ~= nil and t.y ~= nil)) then return true end
@@ -2469,8 +2472,9 @@ local function copyLayout(src,dst)
     dst.point=src.point; dst.relativePoint=src.relativePoint
     dst.x=src.x; dst.y=src.y
     dst.left=src.left; dst.top=src.top
+    dst.centerX=src.centerX; dst.centerY=src.centerY
     dst.locked=src.locked and true or false
-    dst.layoutVersion=3; dst.layoutSaved=true
+    dst.layoutVersion=4; dst.layoutSaved=true
 end
 
 local function resetWindowPosition()
@@ -2481,30 +2485,16 @@ local function resetWindowPosition()
 end
 
 local function ensureWindowOnScreen()
-    -- Nudge the window back onto the screen WITHOUT discarding the player's
-    -- chosen position. The old version reset to centre whenever an edge check
-    -- tripped, which on some resolutions / custom clients fired for a perfectly
-    -- visible bottom-right placement and rubber-banded the window to the middle.
     local sw=UIParent and UIParent:GetWidth() or 0
     local sh=UIParent and UIParent:GetHeight() or 0
-    local l=frame:GetLeft(); local tp=frame:GetTop()
-    local fw=frame:GetWidth(); local fh=frame:GetHeight()
-    if sw<=0 or sh<=0 or not l or not tp or not fw or not fh then return false end
-
-    local nl,nt=l,tp
-    if fw<=sw then
-        if nl<0 then nl=0 elseif nl>sw-fw then nl=sw-fw end
-    elseif nl>0 then nl=0 end
-    -- tp is the Y of the top edge measured from the screen bottom.
-    if fh<=sh then
-        if nt<fh then nt=fh elseif nt>sh then nt=sh end
-    elseif nt<sh then nt=sh end
-
-    if nl==l and nt==tp then return false end
-
-    frame:ClearAllPoints()
-    frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",nl,nt)
-    return true
+    local l=frame:GetLeft(); local r=frame:GetRight(); local t=frame:GetTop(); local b=frame:GetBottom()
+    if sw<=0 or sh<=0 or not l or not r or not t or not b then return false end
+    -- Keep at least ~40 px of the meter reachable after resolution/UI-scale changes.
+    if r<40 or l>(sw-40) or t<40 or b>(sh-40) then
+        resetWindowPosition()
+        return true
+    end
+    return false
 end
 
 local function restoreWindowState()
@@ -2518,10 +2508,16 @@ local function restoreWindowState()
         if src.width and src.width>=330 and src.width<=900 then frame:SetWidth(src.width) end
         if src.height and src.height>=110 and src.height<=700 then frame:SetHeight(src.height) end
         frame:ClearAllPoints()
-        if src.left ~= nil and src.top ~= nil then
-            frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",src.left,src.top)
+        -- Layout v4 stores only a CENTER offset.  This avoids restoring absolute
+        -- GetLeft/GetTop coordinates across UI-scale/resolution changes, which
+        -- could make the custom 1.12 client decide the frame was off-screen and
+        -- snap it back to Caw's default position.
+        if src.layoutVersion and src.layoutVersion>=4 and src.centerX ~= nil and src.centerY ~= nil then
+            frame:SetPoint("CENTER",UIParent,"CENTER",src.centerX,src.centerY)
         elseif src.point and src.x ~= nil and src.y ~= nil then
             frame:SetPoint(src.point,UIParent,src.relativePoint or src.point,src.x,src.y)
+        elseif src.left ~= nil and src.top ~= nil then
+            frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",src.left,src.top)
         else
             frame:SetPoint("CENTER",UIParent,"CENTER",260,0)
         end
@@ -2550,9 +2546,18 @@ local function writeWindowState(dst)
     local left=frame:GetLeft(); local top=frame:GetTop()
     if left ~= nil then dst.left=left end
     if top ~= nil then dst.top=top end
+    -- Persist a resolution/UI-scale-stable center offset as the authoritative
+    -- position for new saves. GetCenter is read only after movement has stopped.
+    local cx,cy=frame:GetCenter()
+    local ux,uy=nil,nil
+    if UIParent and UIParent.GetCenter then ux,uy=UIParent:GetCenter() end
+    if cx and cy and ux and uy then
+        dst.centerX=cx-ux
+        dst.centerY=cy-uy
+    end
     dst.locked=D.locked and true or false
     dst.mode=D.mode
-    dst.layoutVersion=3
+    dst.layoutVersion=4
     dst.layoutSaved=true
 end
 
@@ -2571,9 +2576,7 @@ frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart",function() if not D.locked then this:StartMoving() end end)
 frame:SetScript("OnDragStop",function()
     this:StopMovingOrSizing()
-    -- No on-screen correction here: SetClampedToScreen keeps the window
-    -- reachable during the drag, and forcing a correction on every drop is what
-    -- caused the rubber-band. Saved positions are still clamped on load.
+    ensureWindowOnScreen()
     saveWindowState()
 end)
 
