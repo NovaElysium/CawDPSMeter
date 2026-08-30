@@ -1,0 +1,17 @@
+# Shows a "Sponsor" button at the top of the GitHub repo.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# Fill in the handles you actually have and delete the rest.
+# Keys accept a single username; `custom` accepts up to 4 URLs.
+
+buy_me_a_coffee: YOUR_BMC_PAGE      # -> https://www.buymeacoffee.com/YOUR_BMC_PAGE
+
+# --- Optional: add more later ---
+# ko_fi: YOUR_KOFI_PAGE
+# github: [NovaElysium]             # needs GitHub Sponsors enabled (Stripe + ID check)
+#
+# PayPal note: on the PayPal payment page the payer sees the *account holder
+# name*. A personal account shows your real name. To keep it anonymous, use a
+# PayPal BUSINESS profile with a project name, then add its donate link here:
+# custom:
+#   - "https://www.paypal.com/donate/?hosted_button_id=XXXXXXXXXXXXX"

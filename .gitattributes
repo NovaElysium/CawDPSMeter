@@ -1,0 +1,25 @@
+# Normalize line endings on commit, check out LF everywhere.
+# Keeps diffs clean across Windows/macOS/Linux and matches the
+# BigWigs addon packager's expectations.
+* text=auto eol=lf
+
+# --- Source / text ---
+*.lua  text eol=lf
+*.toc  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+
+# --- Binary assets: never diff, never munge ---
+*.tga  binary
+*.blp  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ogg  binary
+*.mp3  binary
+*.ttf  binary
+*.zip  binary
