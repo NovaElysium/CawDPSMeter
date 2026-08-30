@@ -90,7 +90,7 @@ client before opening a PR.
 
 ## Credits
 
-Built by [NovaElysium](https://github.com/NovaElysium) and [cawdpsmeter](https://github.com/cawdpsmeter).
+Built by [NovaElysium](https://github.com/NovaElysium) and [CawDPSMeter](https://github.com/CawDPSMeter).
 
 ## License
 

@@ -27,8 +27,8 @@ param(
 # "Keep my email addresses private"). Example:
 #   1234567+cawdpsmeter@users.noreply.github.com
 # Until this is filled in, commits go through without the trailer.
-$CoAuthorName  = 'cawdpsmeter'
-$CoAuthorEmail = ''
+$CoAuthorName  = 'CawDPSMeter'
+$CoAuthorEmail = '319659345+CawDPSMeter@users.noreply.github.com'
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -57,7 +57,7 @@ else {
 # --- 2. rebuild the managed metadata block ------------------------------------
 $meta = @()
 if ($version) { $meta += "## Version: $version" }
-$meta += '## Author: NovaElysium, cawdpsmeter'
+$meta += '## Author: NovaElysium, CawDPSMeter'
 $meta += '## X-License: MIT'
 $meta += '## X-Website: https://github.com/NovaElysium/Caw-DPS-Meter'
 
