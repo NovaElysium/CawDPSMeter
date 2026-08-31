@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.2 Combat End Rework
+-- Caw DPS Meter v1.0.4 Window Stability
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.2"
+D.version = "1.0.4"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -2485,16 +2485,32 @@ local function resetWindowPosition()
 end
 
 local function ensureWindowOnScreen()
+    -- Nudge the window back onto the screen WITHOUT re-centring it. The old
+    -- version reset to Caw's default position whenever a 40px edge check
+    -- tripped, which on some resolutions fired for a perfectly visible
+    -- bottom-right placement and rubber-banded the window to the middle.
     local sw=UIParent and UIParent:GetWidth() or 0
     local sh=UIParent and UIParent:GetHeight() or 0
-    local l=frame:GetLeft(); local r=frame:GetRight(); local t=frame:GetTop(); local b=frame:GetBottom()
-    if sw<=0 or sh<=0 or not l or not r or not t or not b then return false end
-    -- Keep at least ~40 px of the meter reachable after resolution/UI-scale changes.
-    if r<40 or l>(sw-40) or t<40 or b>(sh-40) then
-        resetWindowPosition()
-        return true
-    end
-    return false
+    local l=frame:GetLeft(); local tp=frame:GetTop()
+    local fw=frame:GetWidth(); local fh=frame:GetHeight()
+    if sw<=0 or sh<=0 or not l or not tp or not fw or not fh then return false end
+
+    -- Keep at least this much of the window visible on each axis. A flush-to-edge
+    -- placement stays exactly as dropped; only a mostly-off window is pulled back.
+    local keepX=fw; if keepX>90 then keepX=90 end
+    local keepY=fh; if keepY>45 then keepY=45 end
+
+    local nl,nt=l,tp
+    if nl>sw-keepX then nl=sw-keepX end
+    if nl+fw<keepX then nl=keepX-fw end
+    -- tp is the Y of the top edge, measured from the screen bottom.
+    if nt<keepY then nt=keepY end
+    if nt-fh>sh-keepY then nt=sh-keepY+fh end
+
+    if nl==l and nt==tp then return false end
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",nl,nt)
+    return true
 end
 
 local function restoreWindowState()

@@ -3,13 +3,22 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.4] - 2026-08-31
+
+### Fixed
+- `SetClampedToScreen` is no longer used. Native frame-clamping caused
+  ACCESS_VIOLATION crashes while dragging on some 1.12 client builds.
+- The window position is stored as a resolution-stable centre offset
+  (layout v4), so it survives a resolution or UI-scale change instead of
+  being treated as off-screen and snapped back to the default spot.
+- The window no longer rubber-bands to the centre when you drag it toward
+  an edge. On-screen correction now clamps the position (keeping your
+  placement) and only runs when the window is actually mostly off screen.
+
 ## [1.0.3] - 2026-08-31
 
 ### Fixed
-- The window no longer rubber-bands back to the centre of the screen when
-  you drag it toward the bottom-right (or any edge). Dropping the window now
-  keeps it where you put it. Saved positions are still pulled back on screen
-  on load if the resolution changed, but by clamping, not by re-centring.
+- First pass at the window rubber-band fix (superseded by 1.0.4).
 
 ## [1.0.2] - 2026-08-30
 
