@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.4 Window Stability
+-- Caw DPS Meter v1.0.5 Window Edge Clamp
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.4"
+D.version = "1.0.5"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
