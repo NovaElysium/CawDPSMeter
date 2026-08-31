@@ -2485,31 +2485,50 @@ local function resetWindowPosition()
 end
 
 local function ensureWindowOnScreen()
-    -- Nudge the window back onto the screen WITHOUT re-centring it. The old
-    -- version reset to Caw's default position whenever a 40px edge check
-    -- tripped, which on some resolutions fired for a perfectly visible
-    -- bottom-right placement and rubber-banded the window to the middle.
-    local sw=UIParent and UIParent:GetWidth() or 0
-    local sh=UIParent and UIParent:GetHeight() or 0
-    local l=frame:GetLeft(); local tp=frame:GetTop()
-    local fw=frame:GetWidth(); local fh=frame:GetHeight()
-    if sw<=0 or sh<=0 or not l or not tp or not fw or not fh then return false end
+    -- Manual clamp using the ACTUAL rendered edges of UIParent and the meter.
+    -- Do NOT use SetClampedToScreen on this custom 1.12 client: native clamping
+    -- has caused ACCESS_VIOLATION crashes while dragging.
+    --
+    -- Important: do not derive the right/top screen edge from GetWidth()/GetHeight().
+    -- On some 1.12/custom-client UI-scale combinations those values do not line up
+    -- exactly with the coordinate space returned by GetLeft/GetRight/GetTop/GetBottom.
+    -- That was the reason right/top appeared to rubber-band much earlier than
+    -- left/bottom. Compare edge coordinates directly instead.
+    if not UIParent then return false end
+    local pl=UIParent:GetLeft(); local pr=UIParent:GetRight()
+    local pb=UIParent:GetBottom(); local pt=UIParent:GetTop()
+    local l=frame:GetLeft(); local r=frame:GetRight()
+    local b=frame:GetBottom(); local t=frame:GetTop()
+    if not pl or not pr or not pb or not pt or not l or not r or not b or not t then return false end
 
-    -- Keep at least this much of the window visible on each axis. A flush-to-edge
-    -- placement stays exactly as dropped; only a mostly-off window is pulled back.
-    local keepX=fw; if keepX>90 then keepX=90 end
-    local keepY=fh; if keepY>45 then keepY=45 end
+    -- Small visual tolerance keeps the one-pixel border flush with the screen edge
+    -- without allowing the meter to be meaningfully lost off-screen.
+    local edgeBleed=8
+    local dx=0
+    local dy=0
 
-    local nl,nt=l,tp
-    if nl>sw-keepX then nl=sw-keepX end
-    if nl+fw<keepX then nl=keepX-fw end
-    -- tp is the Y of the top edge, measured from the screen bottom.
-    if nt<keepY then nt=keepY end
-    if nt-fh>sh-keepY then nt=sh-keepY+fh end
+    if l < pl-edgeBleed then
+        dx=(pl-edgeBleed)-l
+    elseif r > pr+edgeBleed then
+        dx=(pr+edgeBleed)-r
+    end
 
-    if nl==l and nt==tp then return false end
+    if b < pb-edgeBleed then
+        dy=(pb-edgeBleed)-b
+    elseif t > pt+edgeBleed then
+        dy=(pt+edgeBleed)-t
+    end
+
+    if dx==0 and dy==0 then return false end
+
+    -- Move by the required correction delta instead of reconstructing the frame
+    -- position from width/height. This preserves the exact dragged position and
+    -- avoids scale-dependent right/top snapping.
+    local cx,cy=frame:GetCenter()
+    local ux,uy=UIParent:GetCenter()
+    if not cx or not cy or not ux or not uy then return false end
     frame:ClearAllPoints()
-    frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",nl,nt)
+    frame:SetPoint("CENTER",UIParent,"CENTER",(cx-ux)+dx,(cy-uy)+dy)
     return true
 end
 
