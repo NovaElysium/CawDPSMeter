@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.5 Window Edge Clamp
+-- Caw DPS Meter v1.0.6
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.5"
+D.version = "1.0.6"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -37,6 +37,8 @@ D.utilityUnknownCount = 0
 D.ignoredOutsiders = 0
 D.globalUtility = {buffs={}, debuffsReceived={}, debuffsCast={}, cc={}, ccBreaks={}, interrupts={}, dispels={}}
 D.recentAuraCasts = {}
+D.recentAuraOrigins = {}
+D.recentDirectRosterAuraCasts = {}
 D.activeAuraSources = {}
 D.activeRosterBuffs = {}
 D.weaponBuffState = {main=nil,off=nil}
@@ -259,6 +261,18 @@ D.scanPlayerBuffs = function(applyLive)
         local ti=D.guidToActor[pg or D.selfKey]
         if ti and D.applyLivePlayerAuraDiff then
             D.applyLivePlayerAuraDiff(ti,current)
+        end
+    end
+
+    -- Keep the pre-combat roster cache authoritative too. PLAYER_AURAS_CHANGED
+    -- also fires while we are out of combat (for example when Drink or First Aid
+    -- expires). Previously those vanished from playerBuffScanState but remained
+    -- in activeRosterBuffs, so the next fight seeded them again as if they were
+    -- still active for the whole encounter.
+    local cachedKey,cachedBuff
+    for cachedKey,cachedBuff in D.activeRosterBuffs do
+        if cachedBuff and cachedBuff.target=="player" and not cachedBuff.weaponBuff then
+            if not current[cachedBuff.spell] then D.activeRosterBuffs[cachedKey]=nil end
         end
     end
 
@@ -584,6 +598,7 @@ local function auraEntry(tbl,name)
     if not e.targets then e.targets={} end
     if not e.total then e.total=0 end
     if not e.count then e.count=0 end
+    if not e.sources then e.sources={} end
     return e
 end
 local function auraClock()
@@ -591,10 +606,11 @@ local function auraClock()
     if D.startTime and D.startTime>0 and D.lastDuration and D.lastDuration>0 then return D.startTime+D.lastDuration end
     return GetTime()
 end
-local function startAura(tbl,spell,targetKey)
+local function startAura(tbl,spell,targetKey,sourceName,sourceKey)
     if not tbl or not spell then return nil end
     targetKey=targetKey or "self"
     local e=auraEntry(tbl,spell)
+    if sourceName and sourceName~="" and sourceName~="Unknown" then e.sources[sourceKey or sourceName]=sourceName end
     if not e.active[targetKey] then
         e.active[targetKey]=auraClock()
         e.count=e.count+1
@@ -658,6 +674,97 @@ local function clearRecentAuraCast(target,spell)
     if not target or not spell then return end
     D.recentAuraCasts[target.."|"..spell]=nil
 end
+D.rememberAuraOrigin = function(sourceToken,spell,target)
+    if not sourceToken or not spell or not target then return end
+    local info=D.guidToActor and D.guidToActor[sourceToken] or nil
+    local name=nil
+    if info then name=info.name else name=D.currentEnemyNames[sourceToken] or D.enemyNameFromGUID(sourceToken) end
+    if name then D.recentAuraOrigins[target.."|"..spell]={name=name,key=sourceToken,time=GetTime()} end
+end
+D.recentAuraOrigin = function(target,spell)
+    local r=D.recentAuraOrigins[target.."|"..spell]; if not r then return nil end
+    if GetTime()-(r.time or 0)>4 then D.recentAuraOrigins[target.."|"..spell]=nil; return nil end
+    return r
+end
+D.backfillAuraSource = function(tbl,spell,sourceName,sourceKey)
+    if not tbl or not spell or not sourceName or sourceName=="" or sourceName=="Unknown" then return end
+    -- Never expose unresolved RAW GUIDs as player/mob names.
+    if string.find(sourceName,"^0x[%x]+$") then return end
+    local e=tbl[spell]
+    if not e then return end
+    if not e.sources then e.sources={} end
+    e.sources[sourceKey or sourceName]=sourceName
+end
+D.auraSourceText = function(e)
+    if not e or not e.sources then return nil end
+    local names={}; local n=0; local k,v
+    for k,v in e.sources do if v and v~="" and v~="Unknown" then n=n+1; names[n]=v end end
+    if n<1 then return nil end
+    table.sort(names)
+    -- Keep aura tooltips compact in large raids: show at most five source names.
+    -- The complete source set remains stored on the aura entry; this only limits display.
+    local limit=n; if limit>5 then limit=5 end
+    local out=names[1]; local i=2
+    while i<=limit do out=out..", "..names[i]; i=i+1 end
+    if n>limit then out=out.."  +"..tostring(n-limit).." more" end
+    return out
+end
+D.auraSourceCount = function(e)
+    if not e or not e.sources then return 0 end
+    local n=0; local k,v
+    for k,v in e.sources do if v and v~="" and v~="Unknown" then n=n+1 end end
+    return n
+end
+D.addAuraSourceHealing = function(tbl,spell,sourceName,sourceKey,amount)
+    if not tbl or not spell or not sourceName or sourceName=="" or sourceName=="Unknown" then return end
+    if string.find(sourceName,"^0x[%x]+$") then return end
+    amount=tonumber(amount); if not amount or amount<=0 then return end
+    local e=tbl[spell]; if not e then return end
+    local key=sourceKey or sourceName
+    if not e.sources then e.sources={} end
+    e.sources[key]=sourceName
+    if not e.sourceHealing then e.sourceHealing={} end
+    local h=e.sourceHealing[key]
+    if not h then h={name=sourceName,healing=0}; e.sourceHealing[key]=h end
+    h.name=sourceName; h.healing=(h.healing or 0)+amount
+end
+D.auraHealingSourceRows = function(e)
+    if not e or not e.sourceHealing then return nil,0,0 end
+    local rows={}; local n=0; local k,h
+    for k,h in e.sourceHealing do
+        if h and h.name and h.name~="" and (h.healing or 0)>0 then n=n+1; rows[n]={name=h.name,healing=h.healing or 0} end
+    end
+    if n<1 then return nil,0,0 end
+    table.sort(rows,function(x,y) return (x.healing or 0)>(y.healing or 0) end)
+    local shown=n; if shown>5 then shown=5 end
+    return rows,shown,n
+end
+D.addAuraSourceDamage = function(tbl,spell,sourceName,sourceKey,amount)
+    if not tbl or not spell or not sourceName or sourceName=="" or sourceName=="Unknown" then return end
+    if string.find(sourceName,"^0x[%x]+$") then return end
+    amount=tonumber(amount); if not amount or amount<=0 then return end
+    -- Damage may only enrich an aura that was already observed as a debuff.
+    -- Never manufacture Debuffs Received entries from combat damage alone.
+    local e=tbl[spell]; if not e then return end
+    local key=sourceKey or sourceName
+    if not e.sources then e.sources={} end
+    e.sources[key]=sourceName
+    if not e.sourceDamage then e.sourceDamage={} end
+    local h=e.sourceDamage[key]
+    if not h then h={name=sourceName,damage=0}; e.sourceDamage[key]=h end
+    h.name=sourceName; h.damage=(h.damage or 0)+amount
+end
+D.auraDamageSourceRows = function(e)
+    if not e or not e.sourceDamage then return nil,0,0 end
+    local rows={}; local n=0; local k,h
+    for k,h in e.sourceDamage do
+        if h and h.name and h.name~="" and (h.damage or 0)>0 then n=n+1; rows[n]={name=h.name,damage=h.damage or 0} end
+    end
+    if n<1 then return nil,0,0 end
+    table.sort(rows,function(x,y) return (x.damage or 0)>(y.damage or 0) end)
+    local shown=n; if shown>5 then shown=5 end
+    return rows,shown,n
+end
 local function resetFight()
     clearTable(D.actors); D.startTime=0; D.lastDuration=0; D.parsedTotal=0; D.lastParsed="none"
     D.rawUnknown={}; D.rawUnknownCount=0; D.utilityUnknown={}; D.utilityUnknownCount=0; D.ignoredOutsiders=0
@@ -669,7 +776,7 @@ local function resetFight()
     D.lastRosterCombatActivity=0
     D.deadSyncLastReceived=0; D.deadSyncNextRequest=0
     D.combatStateCheckAt=0; D.outOfCombatSince=0
-    D.recentAuraCasts={}; D.activeAuraSources={}
+    D.recentAuraCasts={}; D.recentAuraOrigins={}; D.recentDirectRosterAuraCasts={}; D.activeAuraSources={}
     D.pendingSelfDispel=nil; D.recentSelfDispelCast=nil; D.lastSelfDispelRecord=nil
     D.currentEnemyDamage={}; D.currentEnemyNames={}; D.currentEnemyBestGuid=nil; D.currentEnemyBestDamage=0; D.currentFightName="Current"
     clearTable(D.activeEnemyCasts)
@@ -758,7 +865,7 @@ local function safeUnitName(unit)
     return nil
 end
 
-local function enemyNameFromGUID(guid)
+D.enemyNameFromGUID = function(guid)
     if not guid then return nil end
     local name=safeUnitName(guid)
     if name then return name end
@@ -784,7 +891,7 @@ local function noteEnemyTarget(guid,amount)
     D.currentEnemyDamage[guid]=total
 
     if not D.currentEnemyNames[guid] then
-        D.currentEnemyNames[guid]=enemyNameFromGUID(guid)
+        D.currentEnemyNames[guid]=D.enemyNameFromGUID(guid)
     end
 
     -- Incremental dominant-target cache. Damage totals only ever increase
@@ -797,7 +904,7 @@ local function noteEnemyTarget(guid,amount)
 
     local bestGuid=D.currentEnemyBestGuid
     if bestGuid then
-        local bestName=D.currentEnemyNames[bestGuid] or enemyNameFromGUID(bestGuid)
+        local bestName=D.currentEnemyNames[bestGuid] or D.enemyNameFromGUID(bestGuid)
         if bestName then
             D.currentEnemyNames[bestGuid]=bestName
             D.currentFightName=bestName
@@ -1445,11 +1552,28 @@ D.captureIncomingDamage = function(ev,text)
 
     local sourceName=nil
     if sourceGuid then
-        sourceName=D.currentEnemyNames[sourceGuid] or enemyNameFromGUID(sourceGuid)
+        sourceName=D.currentEnemyNames[sourceGuid] or D.enemyNameFromGUID(sourceGuid)
         if sourceName then D.currentEnemyNames[sourceGuid]=sourceName end
     end
     if not sourceName then sourceName=sourceGuid or "Environment" end
     if not ability or ability=="" then ability="Melee" end
+
+    -- Aura application lines often omit their caster on Vanilla. Once a later
+    -- tick/hit gives us a resolvable enemy name, attach it to an already tracked
+    -- Debuffs Received entry with the same spell. This backfills the tooltip
+    -- without guessing and never creates a debuff from damage alone.
+    if sourceName and not string.find(sourceName,"^0x[%x]+$") then
+        D.backfillAuraSource(actor.debuffsReceived,ability,sourceName,sourceGuid or sourceName)
+    end
+
+    -- For periodic harmful auras, keep the same compact per-source breakdown
+    -- as HoT buffs: source -> actual damage dealt by this debuff. Direct hits
+    -- are deliberately excluded so a spell's impact damage is not presented
+    -- as DoT/debuff damage.
+    if sourceName and not string.find(sourceName,"^0x[%x]+$") and
+       (string.find(text,"^You suffer ") or string.find(text,"^0x[%x]+ suffers ")) then
+        D.addAuraSourceDamage(actor.debuffsReceived,ability,sourceName,sourceGuid or sourceName,amount)
+    end
 
     -- Only trust overkill when the combat text explicitly exposes it.
     local overkill=nil
@@ -1657,6 +1781,34 @@ local function recordUtility(kind,sourceInfo,spell,targetToken)
     return true
 end
 
+D.handleUnitCastAuraSource = function(casterGUID,targetGUID,eventType,spellId)
+    -- UNIT_CASTEVENT is the only reliable source for many direct, non-ticking
+    -- auras (for example Power Word: Shield). Cache the cast only; the later
+    -- RAW aura gain/afflicted message still proves that the aura actually landed.
+    if not casterGUID or not targetGUID or eventType~="CAST" or not spellId then return end
+    if not D.guidToActor or not D.guidToActor[targetGUID] then return end
+    if not SpellInfo then return end
+    local ok,spell=pcall(SpellInfo,spellId)
+    if not ok or not spell or spell=="" then return end
+
+    local sourceInfo=actorFromSourceToken(casterGUID)
+    if sourceInfo then
+        rememberAuraCast(sourceInfo,spell,targetGUID)
+        D.rememberAuraOrigin(sourceInfo.guid or sourceInfo.key or casterGUID,spell,targetGUID)
+        -- Some spells apply a secondary aura with a different name. Example:
+        -- Power Word: Shield -> Weakened Soul. The afflicted line contains no
+        -- caster, so keep the most recent roster cast for this exact target as
+        -- a short-lived causal fallback. Exact spell correlation still wins.
+        D.recentDirectRosterAuraCasts[targetGUID]={source=sourceInfo,spell=spell,time=GetTime()}
+        return
+    end
+
+    -- Hostile casts can also be the source of Debuffs Received. Keep an origin
+    -- only when the GUID can be resolved to a real enemy name; never expose a
+    -- raw GUID as tooltip text.
+    D.rememberAuraOrigin(casterGUID,spell,targetGUID)
+end
+
 D.handleUnitCastCC = function(casterGUID,targetGUID,eventType,spellId)
     -- Keep the latest CAST visible in /cdcc. RavenCraft/SuperWoW builds can
     -- differ in SpellInfo return shape, and this tells us exactly what this
@@ -1844,22 +1996,64 @@ local function parseHealing(ev,text)
     _,_,source,spell,target,amount=string.find(text,"^(0x[%x]+)'s (.-) critically heals (0x[%x]+) for ([0-9]+)")
     if not amount then _,_,source,spell,target,amount=string.find(text,"^(0x[%x]+)'s (.-) heals (0x[%x]+) for ([0-9]+)") end
     if amount then
-        local a=actorFromSourceToken(source); if a then return addHealing(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,spell,crit,ev) end
+        local a=actorFromSourceToken(source); if a then
+            local ti=D.guidToActor[target]
+            if ti then local ta=utilityActor(ti); D.backfillAuraSource(ta and ta.buffs,spell,a.name,a.guid or a.key); D.addAuraSourceHealing(ta and ta.buffs,spell,a.name,a.guid or a.key,amount) end
+            return addHealing(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,spell,crit,ev)
+        end
         if ignoreOutsideRoster(source) then return true end
     end
 
     -- HoT forms: target gains 123 health from source's Rejuvenation.
     _,_,target,amount,source,spell=string.find(text,"^(0x[%x]+) gains ([0-9]+) health from (0x[%x]+)'s (.-)%.")
     if amount then
-        local a=actorFromSourceToken(source); if a then return addHealing(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,spell,false,ev) end
+        local a=actorFromSourceToken(source); if a then
+            local ti=D.guidToActor[target]
+            if ti then local ta=utilityActor(ti); D.backfillAuraSource(ta and ta.buffs,spell,a.name,a.guid or a.key); D.addAuraSourceHealing(ta and ta.buffs,spell,a.name,a.guid or a.key,amount) end
+            return addHealing(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,spell,false,ev)
+        end
         if ignoreOutsideRoster(source) then return true end
     end
 
-    -- Your HoT on anyone / yourself.
+    -- Target-local HoT form used by RavenCraft on the receiving client:
+    -- You gain 123 health from <caster GUID>'s Rejuvenation.
+    -- Healing/HPS already knows how to count the GUID-target form above; this
+    -- local-target form must also feed the recipient's Buff Uptime entry.
+    _,_,amount,source,spell=string.find(text,"^You gain ([0-9]+) health from (0x[%x]+)'s (.-)%.")
+    if amount then
+        local a=actorFromSourceToken(source)
+        if a then
+            local pi=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+            local pa=utilityActor(pi)
+            D.backfillAuraSource(pa and pa.buffs,spell,a.name,a.guid or a.key)
+            D.addAuraSourceHealing(pa and pa.buffs,spell,a.name,a.guid or a.key,amount)
+            return addHealing(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,spell,false,ev)
+        end
+        if ignoreOutsideRoster(source) then return true end
+    end
+
+    -- Your HoT on anyone / yourself.  Feed the same per-source aura-healing
+    -- accumulator instead of only the general Healing/HPS totals.
     _,_,target,amount,spell=string.find(text,"^(0x[%x]+) gains ([0-9]+) health from your (.-)%.")
-    if amount then return addHealing(D.selfKey,UnitName("player") or "You",safeUnitGUID("player"),nil,false,amount,spell,false,ev) end
+    if amount then
+        local ti=D.guidToActor[target]
+        local ta=utilityActor(ti)
+        local selfName=UnitName("player") or "You"
+        local selfGuid=safeUnitGUID("player")
+        D.backfillAuraSource(ta and ta.buffs,spell,selfName,selfGuid or D.selfKey)
+        D.addAuraSourceHealing(ta and ta.buffs,spell,selfName,selfGuid or D.selfKey,amount)
+        return addHealing(D.selfKey,selfName,selfGuid,nil,false,amount,spell,false,ev)
+    end
     _,_,amount,spell=string.find(text,"^You gain ([0-9]+) health from your (.-)%.")
-    if amount then return addHealing(D.selfKey,UnitName("player") or "You",safeUnitGUID("player"),nil,false,amount,spell,false,ev) end
+    if amount then
+        local pi=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+        local pa=utilityActor(pi)
+        local selfName=UnitName("player") or "You"
+        local selfGuid=safeUnitGUID("player")
+        D.backfillAuraSource(pa and pa.buffs,spell,selfName,selfGuid or D.selfKey)
+        D.addAuraSourceHealing(pa and pa.buffs,spell,selfName,selfGuid or D.selfKey,amount)
+        return addHealing(D.selfKey,selfName,selfGuid,nil,false,amount,spell,false,ev)
+    end
 
     -- Some 1.12 clients phrase self-target direct heals as 'Your X heals you for N'.
     _,_,spell,amount=string.find(text,"^Your (.-) critically heals you for ([0-9]+)")
@@ -2066,10 +2260,11 @@ local function parseUtility(ev,text)
     _,_,spell,target=string.find(text,"^You cast (.-) on (0x[%x]+)%.")
     if spell and target then
         local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]
-        if si then rememberAuraCast(si,spell,target); return true end
+        if si then D.rememberAuraOrigin(si.guid or si.key,spell,target); rememberAuraCast(si,spell,target); return true end
     end
     _,_,source,spell,target=string.find(text,"^(0x[%x]+) casts (.-) on (0x[%x]+)%.")
     if source then
+        D.rememberAuraOrigin(source,spell,target)
         local si=actorFromSourceToken(source)
         if si then rememberAuraCast(si,spell,target); return true end
         if ignoreOutsideRoster(source) then return true end
@@ -2088,11 +2283,41 @@ local function parseUtility(ev,text)
     if ev and string.find(ev,"_BUFF",1,true) then
         _,_,target,spell=string.find(text,"^(0x[%x]+) gains (.-)%.")
         if target and spell then
+            -- Periodic heal/resource ticks can arrive on *_BUFFS events too, e.g.
+            -- "GUID gains 38 health from GUID's Renew."  They are healing/resource
+            -- combat-log lines, not aura applications.  Never seed them as Buff Uptime.
+            if string.find(spell,"^[0-9]+ health from ")
+                or string.find(spell,"^[0-9]+ Health from ")
+                or string.find(spell,"^[0-9]+ Mana from ")
+                or string.find(spell,"^[0-9]+ mana from ")
+                or string.find(spell,"^[0-9]+ Rage from ")
+                or string.find(spell,"^[0-9]+ rage from ")
+                or string.find(spell,"^[0-9]+ Energy from ")
+                or string.find(spell,"^[0-9]+ energy from ") then
+                -- This is not an aura application, but it can carry the caster
+                -- that the actual aura-gain line omitted.  Use it to backfill
+                -- the already existing Buff Uptime entry before discarding it
+                -- as a buff event. Example: "38 health from GUID's Renew".
+                local _,_,gainSource,gainSpell=string.find(spell,"^[0-9]+ [^ ]+ from (0x[%x]+)'s (.-)$")
+                if gainSource and gainSpell then
+                    local gainActor=actorFromSourceToken(gainSource)
+                    local gainTarget=D.guidToActor[target]
+                    if gainActor and gainTarget then
+                        local gainTargetActor=utilityActor(gainTarget)
+                        D.backfillAuraSource(gainTargetActor and gainTargetActor.buffs,gainSpell,gainActor.name,gainActor.guid or gainActor.key)
+                    end
+                end
+                return true
+            end
             local ti=D.guidToActor[target]
             if ti then
                 D.activeRosterBuffs[target.."|"..spell]={target=target,spell=spell}
                 if D.inCombat then
-                    local ta=utilityActor(ti); startAura(ta.buffs,spell,target); D.lastUtility=ta.name.." buff "..spell
+                    local ta=utilityActor(ti); local origin=D.recentAuraOrigin(target,spell); local caster=recentAuraCaster(target,spell)
+                    if caster then startAura(ta.buffs,spell,target,caster.name,caster.guid or caster.key)
+                    elseif origin then startAura(ta.buffs,spell,target,origin.name,origin.key)
+                    else startAura(ta.buffs,spell,target) end
+                    D.lastUtility=ta.name.." buff "..spell
                 end
             end
             return true
@@ -2100,7 +2325,20 @@ local function parseUtility(ev,text)
         _,_,spell=string.find(text,"^You gain (.-)%.")
         if spell then
             -- Resource gains are not buffs.
-            if string.find(spell,"^[0-9]+ Mana from ") or string.find(spell,"^[0-9]+ Rage from ") or string.find(spell,"^[0-9]+ Energy from ") then
+            if string.find(spell,"^[0-9]+ health from ") or string.find(spell,"^[0-9]+ Health from ")
+                or string.find(spell,"^[0-9]+ Mana from ") or string.find(spell,"^[0-9]+ mana from ")
+                or string.find(spell,"^[0-9]+ Rage from ") or string.find(spell,"^[0-9]+ rage from ")
+                or string.find(spell,"^[0-9]+ Energy from ") or string.find(spell,"^[0-9]+ energy from ") then
+                -- Same backfill for the self-target wording: "You gain ...".
+                local _,_,gainSource,gainSpell=string.find(spell,"^[0-9]+ [^ ]+ from (0x[%x]+)'s (.-)$")
+                if gainSource and gainSpell then
+                    local gainActor=actorFromSourceToken(gainSource)
+                    local selfInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+                    if gainActor and selfInfo then
+                        local selfActor=utilityActor(selfInfo)
+                        D.backfillAuraSource(selfActor and selfActor.buffs,gainSpell,gainActor.name,gainActor.guid or gainActor.key)
+                    end
+                end
                 return true
             end
 
@@ -2113,8 +2351,11 @@ local function parseUtility(ev,text)
             if D.inCombat then
                 local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]
                 if si then
-                    local a=utilityActor(si); local tk=a.guid or a.key
-                    startAura(a.buffs,spell,tk); D.lastUtility=a.name.." buff "..spell
+                    local a=utilityActor(si); local tk=a.guid or a.key; local origin=D.recentAuraOrigin(tk,spell); local caster=recentAuraCaster(tk,spell)
+                    if caster then startAura(a.buffs,spell,tk,caster.name,caster.guid or caster.key)
+                    elseif origin then startAura(a.buffs,spell,tk,origin.name,origin.key)
+                    else startAura(a.buffs,spell,tk) end
+                    D.lastUtility=a.name.." buff "..spell
                 end
             end
             return true
@@ -2126,8 +2367,24 @@ local function parseUtility(ev,text)
     _,_,target,spell=string.find(text,"^(0x[%x]+) is afflicted by (.-)%.")
     if target and spell then
         local ti=D.guidToActor[target]
-        if ti then local ta=utilityActor(ti); startAura(ta.debuffsReceived,spell,target) end
-        local si=recentAuraCaster(target,spell)
+        local si=recentAuraCaster(target,spell); local origin=D.recentAuraOrigin(target,spell)
+        -- Secondary debuffs can have a different name from the cast that caused
+        -- them (Power Word: Shield -> Weakened Soul). If exact spell matching
+        -- found nothing, accept only a very recent roster cast on this same
+        -- target. The narrow window avoids attributing unrelated raid debuffs.
+        if not si and not origin then
+            local direct=D.recentDirectRosterAuraCasts and D.recentDirectRosterAuraCasts[target] or nil
+            if direct then
+                if GetTime()-(direct.time or 0)<=1.25 then si=direct.source
+                else D.recentDirectRosterAuraCasts[target]=nil end
+            end
+        end
+        if ti then
+            local ta=utilityActor(ti)
+            if si then startAura(ta.debuffsReceived,spell,target,si.name,si.guid or si.key)
+            elseif origin then startAura(ta.debuffsReceived,spell,target,origin.name,origin.key)
+            else startAura(ta.debuffsReceived,spell,target) end
+        end
         if si then
             -- A landed hostile CC is itself enough to open the encounter.
             -- This is especially important for Sap: RavenCraft may not put the
@@ -2223,10 +2480,15 @@ local function parseRaw(rawEvent,text)
     if string.find(ev,"AURA_GONE",1,true)
         or string.find(ev,"BREAK_AURA",1,true)
         or string.find(ev,"_BUFF",1,true) then
+        -- RavenCraft/SuperWoW can deliver HoT/resource healing lines through
+        -- *_BUFFS events (for example: GUID gains 38 health from GUID's Rejuvenation).
+        -- Healing must get first refusal here.  parseUtility intentionally consumes
+        -- resource-gain lines so they do not become fake Buff Uptime entries; if it
+        -- runs first, the same line never reaches addHealing.
+        if parseHealing(ev,text) then return end
         if parseUtility(ev,text) then return end
         if parseSelf(ev,text) then return end
         if parseGeneric(ev,text) then return end
-        parseHealing(ev,text)
         return
     end
 
@@ -2418,7 +2680,7 @@ local function sortedActors()
 end
 local function sortedTable(tbl,field)
     local list={}; local n=0; if not tbl then return list,0 end; local name,s
-    for name,s in tbl do local value=s[field or "count"] or 0; if field=="duration" then value=auraEntryDuration(s) end; n=n+1; list[n]={name=name,value=value,count=s.count or 0,hits=s.hits or 0,crits=s.crits or 0,damage=s.damage or 0,critDamage=s.critDamage or 0,maxCrit=s.maxCrit or 0,overkill=s.overkill or 0,overkillKnown=s.overkillKnown or 0,targetCount=auraTargetCount(s)} end
+    for name,s in tbl do local value=s[field or "count"] or 0; if field=="duration" then value=auraEntryDuration(s) end; n=n+1; list[n]={name=name,value=value,count=s.count or 0,hits=s.hits or 0,crits=s.crits or 0,damage=s.damage or 0,critDamage=s.critDamage or 0,maxCrit=s.maxCrit or 0,overkill=s.overkill or 0,overkillKnown=s.overkillKnown or 0,targetCount=auraTargetCount(s),sourceText=D.auraSourceText(s),sourceCount=D.auraSourceCount(s),sourceHealing=s.sourceHealing,sourceDamage=s.sourceDamage} end
     table.sort(list,function(x,y) return x.value>y.value end); return list,n
 end
 local function sortedSpells(a)
@@ -3289,6 +3551,39 @@ while i<=MAX_ROWS do
                 if dur>0 and exposure>0 then pct=(ae.value/(dur*exposure))*100 end
                 if pct>100 then pct=100 end
                 tt:AddDoubleLine(ae.name,string.format("%.1fs | %.1f%% | %dx",ae.value,pct,ae.count or 0),1,1,1,0.86,0.86,0.86)
+                if (D.mode=="buffs" or D.mode=="debuffsReceived") and ae.sourceText then
+                    local healingRows,healingShown,healingTotal=D.auraHealingSourceRows(ae)
+                    if D.mode=="buffs" and healingRows and healingShown>0 then
+                        tt:AddLine("  Sources",0.65,0.65,0.65)
+                        local hi=1
+                        while hi<=healingShown do
+                            local hr=healingRows[hi]
+                            tt:AddDoubleLine("    "..tostring(hr.name),comma(hr.healing or 0).." healing",0.82,0.92,1,0.82,0.92,1)
+                            hi=hi+1
+                        end
+                        if healingTotal>healingShown then tt:AddLine("    +"..tostring(healingTotal-healingShown).." more",0.65,0.65,0.65) end
+                    elseif D.mode=="debuffsReceived" then
+                        local damageRows,damageShown,damageTotal=D.auraDamageSourceRows(ae)
+                        if damageRows and damageShown>0 then
+                            tt:AddLine("  Sources",0.65,0.65,0.65)
+                            local di=1
+                            while di<=damageShown do
+                                local dr=damageRows[di]
+                                tt:AddDoubleLine("    "..tostring(dr.name),comma(dr.damage or 0).." damage",0.82,0.92,1,0.82,0.92,1)
+                                di=di+1
+                            end
+                            if damageTotal>damageShown then tt:AddLine("    +"..tostring(damageTotal-damageShown).." more",0.65,0.65,0.65) end
+                        else
+                            local sourceLabel="  Source"
+                            if (ae.sourceCount or 0)>1 then sourceLabel="  Sources ("..tostring(ae.sourceCount)..")" end
+                            tt:AddDoubleLine(sourceLabel,ae.sourceText,0.65,0.65,0.65,0.82,0.92,1)
+                        end
+                    else
+                        local sourceLabel="  Source"
+                        if (ae.sourceCount or 0)>1 then sourceLabel="  Sources ("..tostring(ae.sourceCount)..")" end
+                        tt:AddDoubleLine(sourceLabel,ae.sourceText,0.65,0.65,0.65,0.82,0.92,1)
+                    end
+                end
                 ax=ax+1
             end
 
@@ -3872,6 +4167,7 @@ events:SetScript("OnEvent",function()
         if requestCombatSync then requestCombatSync(true) end
         updateUI()
     elseif event=="UNIT_CASTEVENT" then
+        if D.handleUnitCastAuraSource then D.handleUnitCastAuraSource(arg1,arg2,arg3,arg4) end
         if D.handleUnitCastCC then D.handleUnitCastCC(arg1,arg2,arg3,arg4) end
     elseif event=="CHAT_MSG_COMBAT_FRIENDLY_DEATH" then
         if D.captureFriendlyDeath then D.captureFriendlyDeath(event,arg1) end

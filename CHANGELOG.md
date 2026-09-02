@@ -3,15 +3,18 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
-## [1.0.5] - 2026-08-31
+## [1.0.6] - 2026-09-01
 
 ### Fixed
-- The window right/top edge no longer rubber-bands while dragging. The
-  on-screen clamp now compares against `UIParent`'s actual rendered edges
-  (`GetLeft`/`GetRight`/`GetTop`/`GetBottom`) instead of `GetWidth`/
-  `GetHeight`, which on some 1.12 client UI-scale combinations do not line up
-  with the coordinate space the edges are reported in. The clamp also moves
-  the window by a small correction delta, preserving the exact dragged spot.
+- Expired player buffs such as Drink and First Aid no longer leak into later combat segments.
+- Periodic healing/resource combat-log lines are no longer misidentified as buff names.
+- HoTs such as Rejuvenation are now recorded correctly in Healing/HPS.
+- Aura source attribution now resolves roster players for HoTs and direct buffs such as Power Word: Shield.
+- Secondary received debuffs such as Weakened Soul can inherit the correlated caster source.
+- Buff Uptime tooltips can attribute HoT healing to individual sources.
+- Debuffs Received tooltips can attribute periodic damage to individual sources.
+- Aura source lists are capped to the top five entries in tooltips, with remaining sources summarized.
+- Manual window edge clamping was refined so the meter can sit at screen edges without native SetClampedToScreen.
 
 ## [1.0.4] - 2026-08-31
 
@@ -19,8 +22,11 @@ and [Semantic Versioning](https://semver.org/).
 - `SetClampedToScreen` is no longer used. Native frame-clamping caused
   ACCESS_VIOLATION crashes while dragging on some 1.12 client builds.
 - The window position is stored as a resolution-stable centre offset
-  (layout v4), so it survives a resolution or UI-scale change.
-- First attempt at the window edge-clamp (superseded by 1.0.5).
+  (layout v4), so it survives a resolution or UI-scale change instead of
+  being treated as off-screen and snapped back to the default spot.
+- The window no longer rubber-bands to the centre when you drag it toward
+  an edge. On-screen correction now clamps the position (keeping your
+  placement) and only runs when the window is actually mostly off screen.
 
 ## [1.0.3] - 2026-08-31
 
