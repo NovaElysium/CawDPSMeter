@@ -3,6 +3,18 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.7] - 2026-09-04
+
+### Added
+- Up to four independent meter windows can be open at once. Extra windows keep their own mode, segment, position, size, lock state and scroll position while sharing the same parsed combat data.
+- Compact header layout for narrow windows, including compact branding and icon controls.
+
+### Changed
+- The minimum window width is smaller for compact layouts.
+- Actor names now shorten with an ellipsis before they can overlap the right-hand value at narrow widths.
+- Damage Taken, Deaths and aura summary text is shorter in compact layouts.
+- Lock/unlock icon state now matches the actual window state.
+
 ## [1.0.6] - 2026-09-01
 
 ### Fixed

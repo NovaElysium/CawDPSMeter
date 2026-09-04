@@ -45,6 +45,8 @@ client did not see.
   SuperAPI addon messages, so late joiners and missed events still get full
   numbers (damage taken and deaths are local to your client)
 - **Chat reports** to Say, Party, Raid or Guild from the in-window Report button
+- Up to **4 independent meter windows**, each with its own mode, segment, position, size and lock state
+- Compact narrow-window layout with adaptive actor-name truncation to keep values readable
 - Persistent window layout, lock state and selected mode
 
 ## Requirements
