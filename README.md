@@ -1,6 +1,18 @@
+<p align="center">
+  <img src=".github/banner.png" alt="Caw DPS Meter" width="600">
+</p>
+
 # Caw DPS Meter 1.0.8
 
 A compact WoW 1.12 combat meter for damage, healing, utility and aura tracking, with up to four independent windows sharing the same combat data.
+
+## Screenshots
+
+<p align="center">
+  <img src=".github/screenshot-meter.png" alt="Damage / DPS view with per-player rows" width="410">
+  &nbsp;&nbsp;
+  <img src=".github/screenshot-modes.png" alt="Mode selector: Damage, Healing, Damage Taken, Deaths, Interrupts, Crowd Control" width="410">
+</p>
 
 ## Requirements and installation
 
