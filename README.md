@@ -65,7 +65,6 @@ did not see. Up to four independent windows share the same combat data.
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
 | pfUI | optional — enables right-chat docking |
-| TWThreat | optional — passive threat calibration when loaded |
 
 Without SuperWoW loaded the meter will not receive raw combat data.
 
