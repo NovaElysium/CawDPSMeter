@@ -30,6 +30,8 @@ function methods:RegisterEvent(k) self.events[k]=true end
 function methods:Show() self.shown=true end
 function methods:Hide() self.shown=false end
 function methods:IsShown() return self.shown end
+function methods:SetAlpha(alpha) self.alpha=alpha end
+function methods:GetAlpha() return self.alpha or 1 end
 function methods:IsVisible() return self.shown and (not self.parent or self.parent:IsVisible()) end
 function methods:SetParent(parent) self.parent=parent end
 function methods:GetParent() return self.parent end

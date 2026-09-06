@@ -49,7 +49,8 @@ function D.pfDockButton(button,v)
     button:RegisterForClicks("LeftButtonUp","RightButtonUp")
     local click=button:GetScript("OnClick")
     button:SetScript("OnClick",function()
-        if arg1=="RightButton" then D.pfDockToggle(v)
+        if arg1=="RightButton" and IsShiftKeyDown and IsShiftKeyDown() then D.pfDockToggleVisibility()
+        elseif arg1=="RightButton" then D.pfDockToggle(v)
         elseif click then click() end
     end)
     local enter=button:GetScript("OnEnter")
@@ -57,9 +58,21 @@ function D.pfDockButton(button,v)
         if enter then enter() end
         if D.getControlTooltip then
             local tt=D.getControlTooltip()
-            tt:AddLine("Right-click: dock / undock at pfUI right chat",0.8,0.8,0.8); tt:Show()
+            tt:AddLine("Right-click: dock / undock at pfUI right chat",0.8,0.8,0.8)
+            tt:AddLine("Shift-right-click: change visibility for all docked windows",0.8,0.8,0.8)
+            local alternate=CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockAlternate
+            tt:AddLine(alternate and "Docked: alternate between chat and Caw" or "Docked: show / hide together with chat",1,0.82,0.35); tt:Show()
         end
     end)
+end
+
+function D.pfDockToggleVisibility()
+    CawDPSMeterCharDB=CawDPSMeterCharDB or {}
+    CawDPSMeterCharDB.pfDockAlternate=not CawDPSMeterCharDB.pfDockAlternate
+    D.pfDockUpdate()
+    DEFAULT_CHAT_FRAME:AddMessage(CawDPSMeterCharDB.pfDockAlternate
+        and "Caw: Docked windows now appear when the pfUI right chat is hidden. Use the chat arrow to switch."
+        or "Caw: Docked windows now show and hide together with the pfUI right chat.")
 end
 
 function D.pfDockPlace(f,enabled,target,previous)
@@ -71,7 +84,12 @@ function D.pfDockPlace(f,enabled,target,previous)
         f:SetParent(UIParent)
     end
     local pos=f.cawDockFree
-    if target:IsVisible() then
+    -- pfUI's normal arrow hides the frame, while thirdparty.meters:Toggle()
+    -- leaves it shown and switches its alpha between zero and one.
+    local showDocked=target:IsVisible()
+    if showDocked and target.GetAlpha and target:GetAlpha()==0 then showDocked=false end
+    if CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockAlternate then showDocked=not showDocked end
+    if showDocked then
         if pos.hiddenByDock then pos.hiddenByDock=nil; f:Show() end
     elseif f:IsShown() then pos.hiddenByDock=true; f:Hide() end
     local inset=0; local panelAttached=false

@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.8
+-- Caw DPS Meter v1.0.9
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.8"
+D.version = "1.0.9"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -3059,7 +3059,7 @@ local header=frame:CreateTexture(nil,"ARTWORK"); header:SetTexture(FLAT_TEX); he
 local headerLine=frame:CreateTexture(nil,"ARTWORK"); headerLine:SetTexture(FLAT_TEX); headerLine:SetVertexColor(0.18,0.18,0.18,1); headerLine:SetPoint("TOPLEFT",frame,"TOPLEFT",1,-27); headerLine:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-1,-27); headerLine:SetHeight(1)
 -- Branded header artwork: the attack-claw and stylized CAW DPS METER wordmark
 -- are baked into one transparent texture so the header stays compact and crisp.
-local brand=frame:CreateTexture(nil,"OVERLAY"); brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga"); brand:SetWidth(168); brand:SetHeight(21); brand:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-3)
+local brand=frame:CreateTexture(nil,"ARTWORK"); brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga"); brand:SetWidth(168); brand:SetHeight(21); brand:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-3)
 
 -- Second toolbar: mode selector left, clearly labelled total right.
 local toolbar=frame:CreateTexture(nil,"ARTWORK"); toolbar:SetTexture(FLAT_TEX); toolbar:SetVertexColor(0.065,0.065,0.065,1); toolbar:SetPoint("TOPLEFT",frame,"TOPLEFT",1,-28); toolbar:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-1,-28); toolbar:SetHeight(22)
@@ -3373,6 +3373,7 @@ while mi<=MODE_MENU_VISIBLE do
 end
 
 local modeDown=CreateFrame("Button",nil,modeMenu)
+modeMenu.buttons=modeMenuButtons; modeMenu.up=modeUp; modeMenu.down=modeDown
 modeDown:SetWidth(144); modeDown:SetHeight(13); modeDown:SetPoint("BOTTOMLEFT",modeMenu,"BOTTOMLEFT",4,3)
 local modeDownHi=modeDown:CreateTexture(nil,"BACKGROUND"); modeDownHi:SetAllPoints(modeDown); modeDownHi:SetTexture(FLAT_TEX); modeDownHi:SetVertexColor(0.24,0.24,0.24,0)
 local modeDownText=modeDown:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); modeDownText:SetPoint("CENTER",modeDown,"CENTER",0,0); modeDownText:SetText("v")
@@ -3545,74 +3546,17 @@ end
 
 D.buildReportUI()
 
--- Compact header for narrow meter windows. The normal Caw layout is preserved
--- at regular widths; below the threshold only the presentation changes.
--- Combat data, menus and controls remain the same.
+-- Main and additional windows share the same compact single-row header.
 function D.applyCompactWindowLayout()
-    local w=frame:GetWidth() or 440
-    -- The action strip is now one consistent icon toolbar on the right:
-    -- + | report | lock | reset | close.  This removes the former wide text
-    -- buttons as a header-width constraint and lets the full Caw wordmark
-    -- return much earlier.
-    local compact=(w<292)
-    local ultra=(w<215)
-
-    brand:ClearAllPoints()
-    resetButton:ClearAllPoints()
-    closeButton:ClearAllPoints()
-    lockButton:ClearAllPoints()
-    D.reportButton:ClearAllPoints()
-    if D.multiAddButton then D.multiAddButton:ClearAllPoints() end
-    modeButton:ClearAllPoints()
-    segmentButton:ClearAllPoints()
-
-    -- Fixed icon toolbar, identical at every width.
-    closeButton:SetWidth(17); closeButton:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-5,-5)
-    resetButton:SetWidth(17); resetButton:SetPoint("RIGHT",closeButton,"LEFT",-3,0)
-    lockButton:SetWidth(17); lockButton:SetPoint("RIGHT",resetButton,"LEFT",-3,0)
-    D.reportButton:SetWidth(17); D.reportButton:SetPoint("RIGHT",lockButton,"LEFT",-3,0)
-    if D.multiAddButton then
-        D.multiAddButton:SetWidth(17)
-        D.multiAddButton:SetPoint("RIGHT",D.reportButton,"LEFT",-3,0)
-    end
-    D.reportText:SetText("")
+    D.layoutMeterHeader({frame=frame,brand=brand,header=header,headerLine=headerLine,toolbar=toolbar,toolbarLine=toolbarLine,
+        summary=summary,modeButton=modeButton,modeMenu=modeMenu,modeText=modeText,modeArrow=modeArrow,segmentButton=segmentButton,segmentText=segmentText,segmentArrow=segmentArrow,
+        closeButton=closeButton,resetButton=resetButton,lockButton=lockButton,reportButton=D.reportButton,addButton=D.multiAddButton})
+    D.reportText:SetText(""); resetText:SetText("")
     if D.reportIcon then D.reportIcon:Show() end
-    resetText:SetText("")
-    if lockButton.icon then if D.locked then lockButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawLock.tga") else lockButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawUnlock.tga") end end
-
-    if compact then
-        brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawClaw.tga")
-        brand:SetWidth(21); brand:SetHeight(21)
-        brand:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-3)
-
-        -- Both dropdown menus themselves remain full-size when opened. Only the
-        -- closed selectors shrink, so long mode/fight names stay readable.
-        local inner=w-14
-        local gap=4
-        local mw=math.floor((inner-gap)*0.58)
-        local sw=inner-gap-mw
-        if ultra then
-            if mw<78 then mw=78 end
-            if sw<58 then sw=58 end
-        else
-            if mw<96 then mw=96 end
-            if sw<82 then sw=82 end
-        end
-        modeButton:SetWidth(mw); modeButton:SetPoint("TOPLEFT",frame,"TOPLEFT",7,-31)
-        segmentButton:SetWidth(sw); segmentButton:SetPoint("LEFT",modeButton,"RIGHT",gap,0)
-        segmentText:SetWidth(sw-24)
-        summary:Hide()
-    else
-        brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga")
-        brand:SetWidth(168); brand:SetHeight(21); brand:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-3)
-        modeButton:SetWidth(132); modeButton:SetPoint("TOPLEFT",frame,"TOPLEFT",7,-31)
-        segmentButton:SetWidth(118); segmentButton:SetPoint("LEFT",frame,"TOPLEFT",145,-39)
-        segmentText:SetWidth(94)
-        summary:Show()
-    end
+    if lockButton.icon then lockButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\"..(D.locked and "CawLock.tga" or "CawUnlock.tga")) end
 end
 
--- Short labels are used only while the window is ultra-narrow. The dropdown
+-- Short labels leave room for the controls in narrower windows. The dropdown
 -- menus still show the normal full labels when opened.
 function D.compactModeLabel()
     if D.mode=="damage" then return "DPS" end
@@ -3638,7 +3582,7 @@ end
 
 function D.refreshSelectorLabels()
     local w=frame:GetWidth() or 440
-    if w<215 then
+    if w<360 then
         modeText:SetText(D.compactModeLabel())
         if segmentText then segmentText:SetText(D.compactSegmentLabel()) end
     else
@@ -3765,7 +3709,7 @@ D.rows={}
 local MAX_ROWS=20
 local ROW_HEIGHT=23
 local ROW_STEP=26
-local LIST_TOP=55
+local LIST_TOP=29
 local SCROLL_W=12
 local i=1
 while i<=MAX_ROWS do
@@ -4170,7 +4114,7 @@ end
 
 local function visibleRowCount()
     local h=frame:GetHeight() or 280
-    local n=math.floor((h-(LIST_TOP+8))/ROW_STEP)
+    local n=math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if n<1 then n=1 end; if n>MAX_ROWS then n=MAX_ROWS end
     return n
 end
@@ -4179,7 +4123,7 @@ end
 -- contain the full 40-player raid. Mouse wheel and the slim right-hand bar move
 -- a window over that list.
 local scrollTrack=CreateFrame("Frame",nil,frame)
-scrollTrack:SetWidth(SCROLL_W); scrollTrack:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-3,-LIST_TOP); scrollTrack:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-3,20)
+scrollTrack:SetWidth(SCROLL_W); scrollTrack:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-3,-LIST_TOP); scrollTrack:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-3,28)
 local trackTex=scrollTrack:CreateTexture(nil,"BACKGROUND"); trackTex:SetAllPoints(scrollTrack); trackTex:SetTexture(FLAT_TEX); trackTex:SetVertexColor(0.10,0.10,0.10,0.95)
 local scrollThumb=scrollTrack:CreateTexture(nil,"ARTWORK"); scrollThumb:SetTexture(FLAT_TEX); scrollThumb:SetVertexColor(0.48,0.48,0.48,1); scrollThumb:SetWidth(SCROLL_W-2); scrollThumb:SetHeight(24); scrollThumb:SetPoint("TOP",scrollTrack,"TOP",0,0)
 
@@ -4270,6 +4214,7 @@ updateUI=function()
         if D.applyCompactWindowLayout then D.applyCompactWindowLayout() end
     end
     local dur=getDuration(); local list,count=sortedActors(); local top=1
+
     if segmentText then segmentText:SetText(selectedSegmentLabel()) end
     if count>0 then top=list[1]._cawDisplayValue or 0 end; if top<=0 then top=1 end
     modeText:SetText(MODE_LABELS[D.mode] or D.mode)
@@ -4393,7 +4338,7 @@ end
 function D.multiViewSegmentLabel(v)
     local w=v.frame and v.frame:GetWidth() or 440
     -- Match the primary window exactly: abbreviate only in ultra-compact mode.
-    if w<215 then
+    if w<360 then
         if v.segment=="overall" then return "All" end
         if v.segment=="history" then return "#"..tostring(v.segmentIndex or 1) end
         return "Cur"
@@ -4412,7 +4357,7 @@ end
 function D.multiViewModeLabel(v)
     local w=v.frame and v.frame:GetWidth() or 440
     -- Same ultra-compact threshold and abbreviations as the primary window.
-    if w<215 then
+    if w<360 then
         if v.mode=="damage" then return "DPS" end
         if v.mode=="healing" then return "HPS" end
         if v.mode=="threat" then return "Threat" end
@@ -4555,51 +4500,10 @@ end
 
 function D.layoutMultiWindow(v)
     if not v or not v.frame then return end
-    local w=v.frame:GetWidth() or 440
-    local h=v.frame:GetHeight() or 260
-    v.lastLayoutWidth=w; v.lastLayoutHeight=h
-    local compact=(w<292)
-    local ultra=(w<215)
-
-    -- Every meter window uses the same header grammar as the primary window:
-    -- brand | + | report | lock | reset | close, with mode/segment below it.
-    if v.closeButton then v.closeButton:ClearAllPoints(); v.closeButton:SetWidth(17); v.closeButton:SetPoint("TOPRIGHT",v.frame,"TOPRIGHT",-5,-5) end
-    if v.resetButton then v.resetButton:ClearAllPoints(); v.resetButton:SetWidth(17); v.resetButton:SetPoint("RIGHT",v.closeButton,"LEFT",-3,0) end
-    if v.lockButton then v.lockButton:ClearAllPoints(); v.lockButton:SetWidth(17); v.lockButton:SetPoint("RIGHT",v.resetButton,"LEFT",-3,0) end
-    if v.reportButton then v.reportButton:ClearAllPoints(); v.reportButton:SetWidth(17); v.reportButton:SetPoint("RIGHT",v.lockButton,"LEFT",-3,0) end
-    if v.addButton then v.addButton:ClearAllPoints(); v.addButton:SetWidth(17); v.addButton:SetPoint("RIGHT",v.reportButton,"LEFT",-3,0) end
-
-    if v.brand then
-        v.brand:ClearAllPoints()
-        if compact then
-            v.brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawClaw.tga")
-            v.brand:SetWidth(21); v.brand:SetHeight(21); v.brand:SetPoint("TOPLEFT",v.frame,"TOPLEFT",6,-3)
-        else
-            v.brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga")
-            v.brand:SetWidth(168); v.brand:SetHeight(21); v.brand:SetPoint("TOPLEFT",v.frame,"TOPLEFT",6,-3)
-        end
-    end
-
-    v.modeButton:ClearAllPoints(); v.segmentButton:ClearAllPoints()
-    if compact then
-        local inner=w-14; local gap=4
-        local mw=math.floor((inner-gap)*0.58); local sw=inner-gap-mw
-        if ultra then
-            if mw<78 then mw=78 end; if sw<58 then sw=58 end
-        else
-            if mw<96 then mw=96 end; if sw<82 then sw=82 end
-        end
-        v.modeButton:SetWidth(mw); v.modeButton:SetPoint("TOPLEFT",v.frame,"TOPLEFT",7,-31)
-        v.segmentButton:SetWidth(sw); v.segmentButton:SetPoint("LEFT",v.modeButton,"RIGHT",gap,0)
-        if v.summary then v.summary:Hide() end
-    else
-        v.modeButton:SetWidth(132); v.modeButton:SetPoint("TOPLEFT",v.frame,"TOPLEFT",7,-31)
-        v.segmentButton:SetWidth(118); v.segmentButton:SetPoint("LEFT",v.frame,"TOPLEFT",145,-39)
-        if v.summary then v.summary:Show() end
-    end
-    v.modeText:SetText(D.multiViewModeLabel(v))
-    v.segmentText:SetText(D.multiViewSegmentLabel(v))
-    if v.lockIcon then if v.locked then v.lockIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawLock.tga") else v.lockIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawUnlock.tga") end end
+    v.lastLayoutWidth=v.frame:GetWidth(); v.lastLayoutHeight=v.frame:GetHeight()
+    D.layoutMeterHeader(v)
+    v.modeText:SetText(D.multiViewModeLabel(v)); v.segmentText:SetText(D.multiViewSegmentLabel(v))
+    if v.lockIcon then v.lockIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\"..(v.locked and "CawLock.tga" or "CawUnlock.tga")) end
 end
 
 function D.applyMultiWindowLock(v)
@@ -4707,7 +4611,7 @@ function D.createMultiScroll(v)
     v.scrollTrack=CreateFrame("Frame",nil,f)
     v.scrollTrack:SetWidth(SCROLL_W)
     v.scrollTrack:SetPoint("TOPRIGHT",f,"TOPRIGHT",-3,-LIST_TOP)
-    v.scrollTrack:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-3,20)
+    v.scrollTrack:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-3,28)
     local bg=v.scrollTrack:CreateTexture(nil,"BACKGROUND"); bg:SetAllPoints(v.scrollTrack)
     bg:SetTexture(FLAT_TEX); bg:SetVertexColor(0.10,0.10,0.10,0.95)
     v.scrollThumb=v.scrollTrack:CreateTexture(nil,"ARTWORK")
@@ -4745,6 +4649,7 @@ function D.updateMultiWindow(v)
     v.modeText:SetText(D.multiViewModeLabel(v))
     v.segmentText:SetText(D.multiViewSegmentLabel(v))
     local list,count=D.multiViewSortedActors(v)
+
     local dur=D.multiViewDuration(v)
     local top=1
     if count>0 then top=list[1].value or 1 end
@@ -4762,7 +4667,7 @@ function D.updateMultiWindow(v)
         else v.summary:SetText("Total: "..tostring(total)) end
     end
     local h=v.frame:GetHeight() or 260
-    local visible=math.floor((h-(LIST_TOP+8))/ROW_STEP)
+    local visible=math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if visible<1 then visible=1 end
     if visible>20 then visible=20 end
     local maxOffset=count-visible; if maxOffset<0 then maxOffset=0 end
@@ -4846,10 +4751,10 @@ function D.createMultiWindow(saved)
     f:SetScript("OnDragStart",function() if not v.locked and not this.cawDockFree then this:StartMoving() end end)
     f:SetScript("OnDragStop",function() this:StopMovingOrSizing(); D.clampMultiWindow(this); D.saveMultiWindows() end)
 
-    local brandTex=f:CreateTexture(nil,"OVERLAY"); v.brand=brandTex; brandTex:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga"); brandTex:SetWidth(168); brandTex:SetHeight(21); brandTex:SetPoint("TOPLEFT",f,"TOPLEFT",6,-3)
+    local brandTex=f:CreateTexture(nil,"ARTWORK"); v.brand=brandTex; brandTex:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga"); brandTex:SetWidth(168); brandTex:SetHeight(21); brandTex:SetPoint("TOPLEFT",f,"TOPLEFT",6,-3)
     v.modeButton=CreateFrame("Button",nil,f); v.modeButton:SetHeight(17); v.modeButton:SetPoint("TOPLEFT",f,"TOPLEFT",7,-31); flatPanel(v.modeButton,0.065,0.065,0.065,1,0.24)
     v.modeText=v.modeButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); v.modeText:SetPoint("LEFT",v.modeButton,"LEFT",5,0); v.modeText:SetPoint("RIGHT",v.modeButton,"RIGHT",-13,0); v.modeText:SetJustifyH("LEFT")
-    local ma=v.modeButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); ma:SetPoint("RIGHT",v.modeButton,"RIGHT",-4,0); ma:SetText("v")
+    local ma=v.modeButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); v.modeArrow=ma; ma:SetPoint("RIGHT",v.modeButton,"RIGHT",-4,0); ma:SetText("v")
     v.segmentButton=CreateFrame("Button",nil,f); v.segmentButton:SetHeight(17); v.segmentButton:SetPoint("LEFT",v.modeButton,"RIGHT",3,0); flatPanel(v.segmentButton,0.065,0.065,0.065,1,0.24)
     v.segmentText=v.segmentButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); v.segmentText:SetPoint("LEFT",v.segmentButton,"LEFT",5,0); v.segmentText:SetPoint("RIGHT",v.segmentButton,"RIGHT",-13,0); v.segmentText:SetJustifyH("LEFT")
     v.segmentArrow=v.segmentButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); v.segmentArrow:SetPoint("RIGHT",v.segmentButton,"RIGHT",-4,0); v.segmentArrow:SetText("v")
@@ -4901,6 +4806,7 @@ function D.createMultiWindow(saved)
         local b=CreateFrame("Button",nil,v.modeMenu); b:SetHeight(18); b:SetPoint("TOPLEFT",v.modeMenu,"TOPLEFT",4,-4-((i-1)*18)); b:SetPoint("RIGHT",v.modeMenu,"RIGHT",-4,0)
         local fs=b:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); fs:SetPoint("LEFT",b,"LEFT",4,0); fs:SetText(MODE_LABELS[MODE_ORDER[i]] or MODE_ORDER[i]); b.mode=MODE_ORDER[i]
         b:SetScript("OnClick",function() v.mode=this.mode; v.scrollOffset=0; v.modeMenu:Hide(); D.updateMultiWindow(v); D.saveMultiWindows() end)
+        b.text=fs
         v.modeMenu.buttons=v.modeMenu.buttons or {}; v.modeMenu.buttons[i]=b; i=i+1
     end
     v.modeButton:SetScript("OnClick",function() if v.modeMenu:IsShown() then v.modeMenu:Hide() else if v.segmentMenu then v.segmentMenu:Hide() end; if v.reportMenu then v.reportMenu:Hide() end; v.modeMenu:Show() end end)

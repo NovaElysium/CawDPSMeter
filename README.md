@@ -75,7 +75,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
    `<WoW>\Interface\AddOns\CawDPSMeter\`
    (the folder must be named `CawDPSMeter`, not `CawDPSMeter-main`).
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
-4. Restart the client (version 1.0.8 adds several files, so `/reload` alone is not
+4. Restart the client (version 1.0.9 adds `CawHeader.lua`, so `/reload` alone is not
    enough on first update), then type `/cd`. Existing settings are kept.
 
 > GitHub's green **Code** then **Download ZIP** button produces a wrongly named
@@ -83,6 +83,15 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 > extracting.
 
 ## Windows and pfUI
+
+Version 1.0.9 puts selectors and buttons in a single compact header, gives encounter
+names more space, and moves totals and Threat status into a reserved footer.
+A persistent watermark sits behind the player bars without intercepting clicks.
+
+Shift-right-click any lock icon to switch visibility modes for all docked windows.
+The default follows chat visibility; alternate mode shows Caw when chat is hidden
+and hides Caw when chat is shown. This preference is saved per character. Both
+normal hiding and pfUI's alpha-only hiding are supported.
 
 Use the **+** button for additional windows. Each window keeps its own mode, size,
 position and scroll offset, and all windows use matching bar dimensions and scroll
@@ -187,7 +196,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.0.8 release notes](RELEASE_NOTES_1.0.8.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.0.9 release notes](RELEASE_NOTES_1.0.9.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

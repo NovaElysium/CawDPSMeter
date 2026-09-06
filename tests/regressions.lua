@@ -524,24 +524,51 @@ check(D.threatSyncPeers['0xD8']==nil,'departed member removed from peer cache')
 NOW=NOW+1; D.threatPeerTick(peerSend,nil)
 check(table.getn(peerMessages)==2,'no presence broadcast when solo')
 local scrollView=D.multiWindows[2] or D.createMultiWindow(nil)
+local headerWidth=scrollView.frame:GetWidth()
+for _,width in ipairs({160,190,260,360,440,900}) do
+    scrollView.frame:SetWidth(width); D.layoutMultiWindow(scrollView)
+    local used=5+scrollView.modeButton:GetWidth()+3+scrollView.segmentButton:GetWidth()+5
+    local buttons={scrollView.addButton,scrollView.reportButton,scrollView.lockButton,scrollView.resetButton,scrollView.closeButton}
+    for _,b in ipairs(buttons) do used=used+b:GetWidth() end
+    used=used+4*(width<260 and 2 or 3)+5
+    check(used<=width and scrollView.modeText:GetWidth()<scrollView.modeButton:GetWidth() and scrollView.segmentText:GetWidth()<scrollView.segmentButton:GetWidth(),'header controls and labels fit inside width '..width)
+end
+check(scrollView.summary.lastPoint[1]=='BOTTOMLEFT' and not scrollView.toolbar:IsShown(),'status is separate from selectors and old toolbar is hidden')
+scrollView.frame:SetWidth(headerWidth); D.layoutMultiWindow(scrollView)
 local oldSorted=D.multiViewSortedActors
 local scrollList={}
 for i=1,25 do scrollList[i]={value=100-i,actor={name='Row'..i,classToken='HUNTER'}} end
 D.multiViewSortedActors=function() return scrollList,table.getn(scrollList) end
 scrollView.frame:Show(); scrollView.frame:SetHeight(260); scrollView.mode='damage'; scrollView.scrollOffset=0
 D.updateMultiWindow(scrollView)
+check(scrollView.brand:IsShown() and scrollView.brand.kind=='Texture','watermark remains present as a noninteractive texture with player bars')
 check(scrollView.rows[1].frame:GetHeight()==D.rows[1].frame:GetHeight() and scrollView.scrollTrack:IsShown(),'extra window matches primary row height and displays overflow controls')
 check(scrollView.rows[1].classIcon:IsShown() and scrollView.rows[1].classIcon:GetWidth()==18,'extra actor rows display class icons at primary dimensions')
 scrollList[1].actor.classToken=nil; D.updateMultiWindow(scrollView)
 check(not scrollView.rows[1].classIcon:IsShown(),'reused extra row hides stale icon for unknown class')
 scrollList[1].actor.classToken='HUNTER'; D.updateMultiWindow(scrollView)
 local primaryOffset=D.scrollOffset
+local footerSafe=true
+for height=110,700 do
+    scrollView.frame:SetHeight(height); D.updateMultiWindow(scrollView)
+    local footerTop=scrollView.summary.lastPoint[5]+scrollView.summary:GetHeight()
+    for _,row in ipairs(scrollView.rows) do
+        if row.frame:IsShown() then
+            local rowBottom=height+row.frame.lastPoint[5]-row.frame:GetHeight()
+            if rowBottom<=footerTop then footerSafe=false end
+        end
+    end
+end
+check(footerSafe,'populated extra window keeps every player row above footer at all supported heights')
+scrollView.frame:SetHeight(260); D.updateMultiWindow(scrollView)
 D.scrollMultiWindow(scrollView,100)
-check(scrollView.scrollOffset==18 and scrollView.rows[7].actor.name=='Row25' and D.scrollOffset==primaryOffset,'extra scrolling reaches final actor and remains independent of primary')
+check(scrollView.scrollOffset==17 and scrollView.rows[8].actor.name=='Row25' and D.scrollOffset==primaryOffset,'extra scrolling reaches final actor and remains independent of primary')
 scrollView.frame:SetHeight(600); D.updateMultiWindow(scrollView)
 check(scrollView.scrollOffset==5,'resizing reclamps extra window scroll offset')
 scrollList={scrollList[1],scrollList[2]}; D.updateMultiWindow(scrollView)
 check(scrollView.scrollOffset==0 and not scrollView.scrollTrack:IsShown() and not scrollView.scrollUp:IsShown(),'short lists reset offset and hide extra scroll controls')
+scrollList={}; D.updateMultiWindow(scrollView)
+check(scrollView.brand:IsShown(),'empty view restores the watermark')
 D.multiViewSortedActors=oldSorted
 pfUI={chat={right=CreateFrame('Frame','MockPfChat',UIParent)}}
 pfUI.chat.right:SetFrameStrata('BACKGROUND')
@@ -558,6 +585,32 @@ this=scrollView.lockButton; arg1='LeftButton'; this.scripts.OnClick()
 pfUI.chat.right:Hide()
 D.pfDockUpdate()
 check(not D.window:IsVisible() and not scrollView.frame:IsVisible(),'pfUI arrow visibility hides both docked windows')
+local oldShift=IsShiftKeyDown
+IsShiftKeyDown=function() return true end
+this=scrollView.lockButton; arg1='RightButton'; this.scripts.OnClick()
+IsShiftKeyDown=oldShift
+check(CawDPSMeterCharDB.pfDockAlternate and scrollView.pfDock and scrollView.locked==oldLocked,'shift right click saves alternate mode without unlocking or undocking')
+check(D.window:IsVisible() and scrollView.frame:IsVisible(),'alternate mode shows both docked windows when chat is hidden')
+check(scrollView.frame.lastPoint[2]==D.window and scrollView.frame.lastPoint[3]=='BOTTOMLEFT','alternate mode retains side by side placement against hidden chat')
+pfUI.chat.right:Show(); D.pfDockUpdate()
+check(not D.window:IsVisible() and not scrollView.frame:IsVisible(),'alternate mode hides both meters when chat returns')
+D.saveMultiWindows()
+check(CawDPSMeterCharDB.pfDockAlternate and CawDPSMeterCharDB.extraWindowCount>0,'saving hidden alternate windows retains mode and windows')
+pfUI.chat.right:Hide(); D.pfDockUpdate()
+check(D.window:IsVisible() and scrollView.frame:IsVisible(),'chat arrow restores both alternate windows repeatedly')
+D.pfDockToggleVisibility()
+check(not D.window:IsVisible() and not scrollView.frame:IsVisible(),'switching back restores shared chat visibility immediately')
+pfUI.chat.right:Show(); pfUI.chat.right:SetAlpha(0); D.pfDockUpdate()
+check(pfUI.chat.right:IsVisible() and not D.window:IsVisible() and not scrollView.frame:IsVisible(),'shared mode detects pfUI alpha-only chat hiding')
+pfUI.chat.right:SetAlpha(1); D.pfDockUpdate()
+check(D.window:IsVisible() and scrollView.frame:IsVisible(),'shared mode restores both meters on alpha-only chat showing')
+D.pfDockToggleVisibility()
+check(not D.window:IsVisible() and not scrollView.frame:IsVisible(),'alternate mode hides both meters with opaque chat')
+pfUI.chat.right:SetAlpha(0); D.pfDockUpdate()
+check(D.window:IsVisible() and scrollView.frame:IsVisible(),'alternate mode shows both meters with alpha-hidden chat')
+pfUI.chat.right:SetAlpha(1); D.pfDockUpdate()
+check(not D.window:IsVisible() and not scrollView.frame:IsVisible(),'alternate mode follows repeated alpha-only arrow changes')
+D.pfDockToggleVisibility(); pfUI.chat.right:Hide(); D.pfDockUpdate()
 D.saveMultiWindows()
 check(CawDPSMeterCharDB.extraWindows[1].pfDock and CawDPSMeterCharDB.extraWindowCount>0,'parent-hidden docked extra survives saving')
 D.pfDockToggle(scrollView)

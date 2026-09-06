@@ -3,6 +3,25 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.0.9] - 2026-09-06
+
+### Changed
+- Compact single-row header shared by the main and additional windows. Mode and encounter selectors sit beside the action buttons.
+- The encounter selector has more space for mob names. The opened mode menu follows its selector width, including its click areas and text.
+- Totals and Threat status now occupy a reserved footer below the player rows.
+- Persistent Caw watermark above the window background and behind player bars, with no mouse interaction.
+
+### Added
+- Optional pfUI chat/meter switching: Shift-right-click a lock icon to alternate between chat and all docked Caw windows. The preference is saved per character. Normal right-click still docks or undocks each window.
+
+### Fixed
+- pfUI visibility tracking now handles both frame hiding and alpha-only hiding used by its third-party meter integration.
+- Player rows and scrolling respect the footer at supported window sizes.
+
+### Release validation
+- 210 mocked Lua regression checks and six two-client sync scenarios pass against the public package. Visual behavior still requires in-game verification.
+- The maintainer's local group counter and talent-status overlay are excluded. Automatic peer discovery, talent exchange and calibration remain available.
+
 ## [1.0.8] - 2026-09-05
 
 ### Added

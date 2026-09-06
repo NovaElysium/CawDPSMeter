@@ -1,7 +1,7 @@
 ## Interface: 11200
-## Title: Caw DPS Meter |cff7fbf4d(v1.0.8)|r
+## Title: Caw DPS Meter |cff7fbf4d(v1.0.9)|r
 ## Notes: Lightweight RavenCraft/Octo combat meter for damage, healing, utility and aura uptime.
-## Version: 1.0.8
+## Version: 1.0.9
 ## Author: Huginn & Muninn
 ## X-License: MIT
 ## X-Website: https://github.com/NovaElysium/CawDPSMeter
@@ -11,6 +11,7 @@
 ## SavedVariablesPerCharacter: CawDPSMeterCharDB
 
 CawDiagnostics.lua
+CawHeader.lua
 CawDPSMeter.lua
 CawThreat.lua
 CawThreatSync.lua
