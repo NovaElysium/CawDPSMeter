@@ -3,10 +3,19 @@
 Released September 8, 2026. This update brings player details, talent trees and
 per-window settings, along with a revised interface for both large and minimal meters.
 
+**1.1.0 download updated:** optional aggro warnings are now included. If you
+already installed 1.1.0, download it again and use `/reload` after replacing the files.
+Under **Settings > Threat**, enable Screen glow, Warning sound, or both. Defaults
+are 90% server threat and an eight-second cooldown; both effects start disabled.
+Warnings trigger when your own threat rises above the threshold or you gain aggro,
+using existing server data even while the meter is hidden. They do not repeat
+continuously while you remain above the threshold. Use **Test warning** to preview
+the enabled effects. Settings apply to your character across all Caw windows.
+
 **Upgrading from 1.0.9:** restart the game after installing so the client loads
 the new addon modules. Existing saved settings and combat recordings are kept.
 
-Caw now has a player analysis window inspired by Details!, with Caw's dark raven
+Caw now has a player analysis window with Caw's dark raven
 artwork, charcoal panels and muted gold accents. Left-click a player bar to open it in that
 window's selected mode and segment. Browse players, completed fights and Overall,
 search abilities, sort by name or contribution, and click an ability for its
@@ -26,7 +35,7 @@ names, ranks and values for contrast. This also applies to additional windows
 and the appearance preview; class-coloured names remain an optional setting.
 
 The sliders icon opens per-window settings; right-clicking a player bar or using
-`/cawoptions` also opens them. General, Window, Bars, Text and pfUI
+`/cawoptions` also opens them. General, Window, Bars, Text, Threat and pfUI
 pages cover scale, dimensions, row fitting, bar height/spacing, font size,
 background/bar/watermark opacity, class icons, ranks, name colours and values.
 New windows start with room for five bars. Existing saved dimensions are retained.
@@ -85,11 +94,10 @@ This addon archive does not install a DLL or modify the launcher. It includes
 the intervening local server/pet/totem fixes and snapshot event cursors.
 The maintainer's private group/talent-status overlay is excluded.
 
-This is an implementation of the available Vanilla data in a familiar layout,
-not a port of Retail's complete Details! feature set. Charts,
+The interface uses the combat data available on Vanilla. Charts,
 target-by-target damage data and player comparison panels remain future work.
 
-Validation: 279 combat/data regressions, 143 UI checks and ten two-client
+Validation: 279 combat/data regressions, 143 UI checks, 38 alert checks and ten two-client
 talent/threat sync scenarios pass against the public package. Checks include
 every mode and encounter selection in main and additional windows, compact
 menus, window reuse, reports, settings and pfUI layering. The ZIP is checked

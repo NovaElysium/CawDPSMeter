@@ -64,6 +64,15 @@ Your own trees come from the client API. Viewing group members' complete trees
 requires this feature on both clients; older clients may supply only point totals.
 The view shows current or last received talents, not the build used in an old fight.
 
+**Settings > Threat** adds optional screen glow and a warning sound for your own
+high threat or newly gained aggro. Both start disabled. Enable either effect,
+adjust the warning threshold (default 90%) and cooldown (default eight seconds),
+then use **Test warning** to preview it. Alerts read existing current-target
+server data and still work when the meter is hidden. They fire on a new warning
+state, rather than repeating continuously, and apply to your character across
+all windows. The updated 1.1.0 download includes these controls; existing 1.1.0
+users can replace the files and `/reload`.
+
 The optional DPSLog backend needs a compatible DLL installed separately. Collection
 and talent sync continue independently of the visible UI. See
 [1.1.0 release notes](RELEASE_NOTES_1.1.0.md) for available statistics and validation.

@@ -605,7 +605,7 @@ function D.uiRefresh(v)
     D.uiPersist()
 end
 
-local pages={"General","Window","Bars","Text","pfUI"}
+local pages={"General","Window","Bars","Text","Threat","pfUI"}
 -- Keep stable control IDs: appearance is shared with saved windows.
 local controls={
     {"Window","scale","Scale",0.05,"number"},{"Window","width","Width",1,"size"},
@@ -617,15 +617,20 @@ local controls={
     {"Text","classNames","Use class colours for names",0,"bool"},{"Text","rate","Show DPS / HPS",0,"bool"},
     {"Text","percent","Show percentages",0,"bool"},{"General","autoCurrent","Switch to Current when combat starts",0,"bool"},
     {"General","hover","Show tooltips on player bars",0,"bool"},{"Window","locked","Lock window",0,"lock"},
-    {"pfUI","docked","Dock to the right chat panel",0,"dock"},{"pfUI","alternate","Show meters when chat is hidden",0,"alternate"}
+    {"pfUI","docked","Dock to the right chat panel",0,"dock"},{"pfUI","alternate","Show meters when chat is hidden",0,"alternate"},
+    {"Threat","glow","Screen glow",0,"alertBool"},{"Threat","sound","Warning sound",0,"alertBool"},
+    {"Threat","threshold","Warning threshold (%)",1,"alertNumber"},
+    {"Threat","cooldown","Warning cooldown (sec)",1,"alertNumber"}
 }
 local descriptions={
     General="Choose how your meter behaves.",Window="Set the size and appearance of this window.",
     Bars="Adjust the player bars.",Text="Choose the information shown on each bar.",
-    pfUI="Share the right chat panel with Caw."
+    pfUI="Share the right chat panel with Caw.",
+    Threat="Aggro warnings for your character, shared by all Caw windows."
 }
 local function optionValue(p,c)
     local v=p.view; local f=v and v.frame or D.window; local key=c[2]; local kind=c[5]
+    if kind=="alertBool" or kind=="alertNumber" then return D.threatAlertSettings()[key] end
     if kind=="size" then if key=="width" then return f:GetWidth() else return f:GetHeight() end end
     if kind=="rows" then return D.uiVisibleRows(v,f) end
     if kind=="lock" then if v then return v.locked else return D.locked end end
@@ -634,6 +639,7 @@ local function optionValue(p,c)
     return D.uiSettings(v)[key]
 end
 local function optionRange(p,c)
+    if c[5]=="alertNumber" then return D.threatAlertRanges[c[2]][1],D.threatAlertRanges[c[2]][2] end
     if c[5]=="size" then return c[2]=="width" and 160 or D.uiHeightForRows(p.view,1),900 end
     if c[5]=="rows" then
         local s=D.uiSettings(p.view)
@@ -645,12 +651,15 @@ local function setOption(p,c,value)
     local v=p.view; if v and v.closed then return end
     local f=v and v.frame or D.window; local key=c[2]; local kind=c[5]
     local old=optionValue(p,c)
-    if kind=="number" or kind=="size" or kind=="rows" then
+    if kind=="number" or kind=="size" or kind=="rows" or kind=="alertNumber" then
         value=tonumber(value); if not value or value~=value then D.refreshOptions(); return end
         local lo,hi=optionRange(p,c)
         value=math.max(lo,math.min(hi,math.floor(value/c[4]+0.5)*c[4]))
     end
-    if kind=="lock" then D.uiSetLock(v,value)
+    if kind=="alertBool" or kind=="alertNumber" then
+        D.threatAlertSettings()[key]=value
+        D.threatAlertEpisode=nil; D.threatAlertPreviewUntil=nil; D.threatAlertStop()
+    elseif kind=="lock" then D.uiSetLock(v,value)
     elseif kind=="dock" then if (old and true or false)~=value then D.pfDockToggle(v) end
     elseif kind=="alternate" then if (old and true or false)~=value then D.pfDockToggleVisibility() end
     elseif kind=="size" then if key=="width" then f:SetWidth(value) else f:SetHeight(value) end
@@ -706,7 +715,12 @@ function D.refreshOptions()
     end
     p.updating=false
     for _,b in ipairs(p.actions) do if b.page==p.page then b:Show() else b:Hide() end end
-    p.preview:Show(); updatePreview(p)
+    if p.page=="Threat" then
+        p.preview:Hide(); p.target:Hide(); p.editing:Hide(); p.copyButton:Hide(); p.threatNote:Show()
+        local c=D.threatAlertSettings(); D.uiEnableButton(p.threatTest,c.glow or c.sound)
+    else
+        p.preview:Show(); updatePreview(p); p.target:Show(); p.editing:Show(); p.copyButton:Show(); p.threatNote:Hide()
+    end
     p.pfNote:SetText(p.page=="pfUI" and "With chat switching off, the meters follow the chat panel's visibility. This setting applies to all docked windows." or "")
 end
 function D.uiConfirmReset(kind)
@@ -745,6 +759,8 @@ function D.openOptions(v)
         p.heading=D.uiText(p,"",180,-59,580,19)
         p.description=D.uiText(p,"",180,-88,580,12); p.description:SetTextColor(0.58,0.59,0.62)
         p.pfNote=D.uiText(p,"",180,-216,365,12); p.pfNote:SetHeight(65)
+        p.threatNote=D.uiText(p,"Requires current server threat data for your target. Warnings also work when the meter is hidden.\n\nEnable either effect, then use Test warning to preview it. Sound follows your game volume.",180,-303,570,12)
+        p.threatNote:SetHeight(100); p.threatNote:SetTextColor(0.68,0.69,0.72); p.threatNote:Hide()
         p.preview=CreateFrame("Frame",nil,p); p.preview:SetWidth(184); p.preview:SetHeight(160)
         p.preview:SetPoint("TOPLEFT",p,"TOPLEFT",584,-145); D.uiPanel(p.preview)
         p.preview.caption=D.uiText(p.preview,"Preview",0,26,184,12); p.preview.caption:SetTextColor(0.62,0.63,0.65)
@@ -763,7 +779,7 @@ function D.openOptions(v)
         for i,c in ipairs(controls) do
             local r=CreateFrame("Frame",nil,p); r:SetWidth(378); r:SetHeight(36); r.control=c
             p.controls[i]=r; p.controls[c[2]]=r
-            local numeric=c[5]=="number" or c[5]=="size" or c[5]=="rows"
+            local numeric=c[5]=="number" or c[5]=="size" or c[5]=="rows" or c[5]=="alertNumber"
             if numeric then
                 D.uiText(r,c[3],0,-5,157,12)
                 r.factor=c[4]<1 and 100 or 1
@@ -804,7 +820,8 @@ function D.openOptions(v)
             local new=D.createMultiWindow(nil); if new then p.view=new end; D.saveMultiWindows(); D.refreshOptions()
         end)
         action("General","Show main window",366,-238,174,function() D.window:Show() end)
-        D.uiText(p,"Editing",18,-453,64,12)
+        p.threatTest=action("Threat","Test warning",584,-145,184,function() D.threatAlertTest() end)
+        p.editing=D.uiText(p,"Editing",18,-453,64,12)
         p.target=D.uiListButton(p,78,-449,158,function()
             if p.targetMenu:IsShown() then p.targetMenu:Hide(); return end
             local n=0
@@ -827,13 +844,15 @@ function D.openOptions(v)
             end)
             b.windowId=i; b.text:SetText("Window "..i); p.targetMenu.buttons[i]=b
         end
-        D.uiButton(p,"Copy to all windows",368,-449,160,function()
+        p.copyButton=D.uiButton(p,"Copy to all windows",368,-449,160,function()
             local source=D.uiCopySettings(D.uiSettings(p.view)); D.appearance=D.uiCopySettings(source)
             for _,view in pairs(D.multiWindows) do view.appearance=D.uiCopySettings(source); D.layoutMultiWindow(view) end
             D.uiRefresh(nil); D.refreshOptions()
         end)
         D.uiButton(p,"Defaults",539,-449,105,function()
-            if p.view then p.view.appearance=D.uiCopySettings(nil) else D.appearance=D.uiCopySettings(nil) end
+            if p.page=="Threat" then
+                CawDPSMeterCharDB.threatAlerts=nil; D.threatAlertEpisode=nil; D.threatAlertPreviewUntil=nil; D.threatAlertStop()
+            elseif p.view then p.view.appearance=D.uiCopySettings(nil) else D.appearance=D.uiCopySettings(nil) end
             D.uiRefresh(p.view); D.refreshOptions()
         end)
         D.uiButton(p,"Close",663,-449,105,function() p:Hide() end)

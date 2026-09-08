@@ -39,6 +39,7 @@ function methods:Hide()
 end
 function methods:IsShown() return self.shown end
 function methods:SetAlpha(alpha) self.alpha=alpha end
+function methods:EnableMouse(enabled) self.mouseEnabled=enabled end
 function methods:SetTexture(texture) self.texture=texture end
 function methods:SetTexCoord(...) self.texCoords=arg end
 function methods:GetAlpha() return self.alpha or 1 end

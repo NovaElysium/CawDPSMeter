@@ -22,7 +22,7 @@ runtime = [line.strip() for line in toc.splitlines() if line.strip() and not lin
 assert 'CawLocalSyncStatus.lua' not in runtime, 'Local-only status display enabled: do not publish this personal TOC.'
 files = sorted(set(runtime + ['CawDPSMeter.toc', 'LICENSE', 'README.md', 'CHANGELOG.md',
                              f'RELEASE_NOTES_{version}.md'] +
-                   [p.relative_to(ROOT).as_posix() for p in (ROOT / 'Media').glob('*.tga')]))
+                   [p.relative_to(ROOT).as_posix() for p in (ROOT / 'Media').iterdir() if p.suffix in ('.tga', '.wav')]))
 stage = ROOT / '.release' / f'package-{version}' / 'CawDPSMeter'
 out = ROOT / 'dist'
 out.mkdir(exist_ok=True)
@@ -48,7 +48,7 @@ with zipfile.ZipFile(archive) as z:
     assert b'CawLocalSyncStatus' not in z.read('CawDPSMeter/CawDPSMeter.toc')
     for name in runtime:
         text = (ROOT / name).read_text(encoding='utf-8')
-        for media in re.findall(r'(Caw[A-Za-z]+\.tga)', text):
+        for media in re.findall(r'(Caw[A-Za-z]+\.(?:tga|wav))', text):
             assert 'Media/' + media in files, media
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (out / (archive.name + '.sha256')).write_text(digest + '  ' + archive.name + '\n', encoding='utf-8')
@@ -62,7 +62,7 @@ if args.sync_checkout and (checkout / '.git').is_dir():
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(public_bytes(name))
     for src in (ROOT / 'tests').iterdir():
-        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua'):
+        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua', 'threat_alert_regressions.lua'):
             dst = checkout / 'tests' / src.name
             dst.parent.mkdir(exist_ok=True)
             shutil.copyfile(src, dst)

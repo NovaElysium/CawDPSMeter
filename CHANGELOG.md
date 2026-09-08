@@ -6,6 +6,10 @@ and [Semantic Versioning](https://semver.org/).
 ## [1.1.0] - 2026-09-08
 
 ### Added
+- Optional screen glow and sound for high threat or newly gained aggro, with
+  character-wide controls under Settings > Threat. Both effects start disabled;
+  the default warning threshold is 90% with an eight-second cooldown.
+  Alerts use existing server snapshots, work with hidden meters, and include a preview.
 - Per-window settings for scale, dimensions, exact row fitting, bar height/gap,
   font size, transparency, watermark, icons, ranks, name colours and rate/share values.
 - Clickable player analysis with player/segment navigation, searchable ability
@@ -22,7 +26,7 @@ and [Semantic Versioning](https://semver.org/).
 ### Changed
 - New windows fit five bars; existing saved dimensions are retained.
 - Compact headers keep settings, report, reset and selectors accessible.
-- A smaller settings panel keeps General, Window, Bars, Text and pfUI pages.
+- A smaller settings panel keeps General, Window, Bars, Text, Threat and pfUI pages.
 - Overall stays selected across combat entry. Automatic Current selection is optional.
 - Player analysis reports unavailable statistics explicitly instead of inventing values.
 - Charcoal panels, gold selection accents and short English menu labels; player
@@ -55,7 +59,7 @@ and [Semantic Versioning](https://semver.org/).
   be nil on the Vanilla client. Each bar keeps its own current row reference.
 
 ### Validation
-- 279 combat/data regressions, 143 UI checks and ten two-client sync scenarios pass
+- 279 combat/data regressions, 143 UI checks, 38 alert checks and ten two-client sync scenarios pass
   against the public package. ZIP contents and private-overlay exclusion are verified.
   UI tests use mocked client APIs; see RELEASE_NOTES_1.1.0.md for scope and limitations.
 

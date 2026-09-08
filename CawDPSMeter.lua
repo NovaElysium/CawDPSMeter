@@ -5236,6 +5236,7 @@ end
 -- Sync timing must not depend on the meter window being visible. Hidden frames
 -- do not receive OnUpdate on the 1.12 client, so drive sync from this always-on frame.
 events:SetScript("OnUpdate",function()
+    if D.threatAlertTick then D.threatAlertTick() end
     if D.threatPeerTick then D.threatPeerTick(sendSyncNow,syncChannel()) end
     if D.talentSyncTick then D.talentSyncTick(sendSyncNow,syncChannel()) end
     if D.talentViewTick then D.talentViewTick(sendSyncNow,syncChannel()) end
