@@ -101,7 +101,6 @@ and talent sync continue independently of the visible UI. See
 | WoW 1.12 client | RavenCraft / OctoWoW / Vanilla private servers |
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
-| pfUI | optional â€” enables right-chat docking |
 
 Without SuperWoW loaded the meter will not receive raw combat data.
 
