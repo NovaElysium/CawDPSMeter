@@ -3,6 +3,62 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-09-08
+
+### Added
+- Per-window settings for scale, dimensions, exact row fitting, bar height/gap,
+  font size, transparency, watermark, icons, ranks, name colours and rate/share values.
+- Clickable player analysis with player/segment navigation, searchable ability
+  list, sorting, ability statistics and labelled pet contributions.
+- Settings pages for pfUI docking and appearance; header resets require confirmation.
+- Native sliders, numeric inputs, checkboxes, a window selector and an appearance preview.
+- Optional DPSLog input adapter and event cursors for calibration snapshots.
+- Whisper reports with an editable player-target recipient and a frozen report selection.
+- A Talents button in player details shows native talent positions, icons and ranks.
+  Group members supply tree details on request; both clients need the new viewer.
+- Drag meters by their footer or empty background, or Shift-drag a player bar.
+  Regular bar clicks, locking, docking and resize grips keep their existing roles.
+
+### Changed
+- New windows fit five bars; existing saved dimensions are retained.
+- Compact headers keep settings, report, reset and selectors accessible.
+- A smaller settings panel keeps General, Window, Bars, Text and pfUI pages.
+- Overall stays selected across combat entry. Automatic Current selection is optional.
+- Player analysis reports unavailable statistics explicitly instead of inventing values.
+- Charcoal panels, gold selection accents and short English menu labels; player
+  details group spells and mode-specific statistics in separate columns.
+- Main and additional meters use darker pfUI-style panels and a separate footer.
+  Dropdown labels use bright 12-pixel text; narrow mode entries have short labels
+  and full-label tooltips while keeping the selector width.
+- Player, fight and spell list arrows disable at the ends and when all entries fit.
+- Player bars use darker class colours with brighter names, ranks and values
+  for contrast, including the additional windows and appearance preview.
+- Narrow headers keep usable mode/encounter selectors and group actions under **...**.
+  Encounter lists shrink to their entries, with full-width scrolling controls when needed.
+- The compact menu's three-dot icon stays centered inside its button without text wrapping.
+- Small player bars abbreviate amounts (Threat shows its percentage) and prioritize
+  names over icons; larger windows restore saved rate/share settings. Footer totals
+  align right, and complete labels and summaries remain available on hover.
+- Solid background textures preserve configured opacity without the old tooltip
+  texture's additional transparency.
+- Includes the intervening local threat, pet and totem fixes; reference recording
+  and talent sync remain active. The local maintainer overlay stays excluded.
+
+### Fixed
+- Footer totals and DPS/HPS shorten to k/M values when needed, while their tooltip
+  retains full totals. Narrow windows keep text inside the available footer space.
+- Meter dropdowns close each other and clear when their window is hidden or Settings opens.
+- Hover handlers preserve the shared theme and locked-button highlight.
+- Encounter dropdown widths follow their selector in main and additional windows.
+- Melee attacks have a sword icon in the spell list and selected-spell details.
+- Player bar hover and click handlers no longer capture a loop variable that can
+  be nil on the Vanilla client. Each bar keeps its own current row reference.
+
+### Validation
+- 279 combat/data regressions, 143 UI checks and ten two-client sync scenarios pass
+  against the public package. ZIP contents and private-overlay exclusion are verified.
+  UI tests use mocked client APIs; see RELEASE_NOTES_1.1.0.md for scope and limitations.
+
 ## [1.0.9] - 2026-09-06
 
 ### Changed

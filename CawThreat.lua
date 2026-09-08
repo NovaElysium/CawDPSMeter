@@ -4,7 +4,7 @@
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
 
-D.threatModelVersion = "CawThreat-0.20"
+D.threatModelVersion = "CawThreat-0.21"
 D.threatPendingCast = D.threatPendingCast or {}
 
 -- Conservative spell multipliers that are independent of rank.
@@ -385,7 +385,8 @@ end
 -- Only supported roster casts enter the pending table. RAW success commits them.
 D.threatGrowlById={[2649]=50,[14916]=65,[14917]=110,[14918]=170,[14919]=240,[14920]=320,[14921]=415}
 -- Measured RavenCraft combinations only; no extrapolation to other levels.
-D.threatGrowlByLevel={[14917]={[29]=146},[14918]={[33]=182}}
+-- Level 34: eight rank-4 Growls across three captures / two enemy GUIDs.
+D.threatGrowlByLevel={[14917]={[29]=146},[14918]={[33]=182,[34]=186}}
 
 function D.threatPetLevelAtUnit(guid,unit)
     if not UnitExists or not UnitLevel then return nil end

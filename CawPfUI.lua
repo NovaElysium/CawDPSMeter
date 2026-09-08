@@ -25,7 +25,7 @@ function D.pfDockDetach(f)
     local pos=f and f.cawDockFree
     if not pos then return end
     f:SetParent(UIParent); f:ClearAllPoints()
-    f:SetPoint("CENTER",UIParent,"CENTER",pos.x,pos.y)
+    if D.uiAnchorCenter then D.uiAnchorCenter(f,pos.x,pos.y) else f:SetPoint("CENTER",UIParent,"CENTER",pos.x,pos.y) end
     if pos.hiddenByDock then f:Show() end
     f.cawDockFree=nil
 end
@@ -79,6 +79,7 @@ function D.pfDockPlace(f,enabled,target,previous)
     if not enabled or not target then D.pfDockDetach(f); return previous end
     if not f.cawDockFree then
         local x,y=f:GetCenter(); local ux,uy=UIParent:GetCenter()
+        if D.uiCenterOffset then local dx,dy=D.uiCenterOffset(f); x=ux+dx; y=uy+dy end
         f.cawDockFree={x=(x or ux)-ux,y=(y or uy)-uy,
             strata=f:GetFrameStrata(),level=f:GetFrameLevel()}
         f:SetParent(UIParent)

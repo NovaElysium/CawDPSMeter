@@ -17,10 +17,11 @@ def client(name,guid,cls,other,otherguid,otherclass):
     UNITS.party1={{name="{other}",guid="{otherguid}",class="{otherclass}"}}
     PARTY_COUNT=1; TALENT_RANK=3
     GetNumTalentTabs=function() return 2 end
+    GetTalentTabInfo=function(tab) return tab==1 and "Feral Combat" or "Restoration" end
     GetNumTalents=function() return 2 end
     GetTalentInfo=function(tab,i)
       if tab==1 and i==1 then return "Feral Instinct","icon",1,1,TALENT_RANK,3 end
-      return "Other talent","icon",1,2,1,5
+      return "Other talent","icon",1,i,1,5
     end
     UnitBuff=function(unit,i) if i==1 and UNITS[unit] and UNITS[unit].class=="DRUID" then return "bear",1,5487 end end
     ''')
@@ -74,6 +75,50 @@ local profileId=d.threatCalSession.actorContexts[id].talentProfileId
 assert(d.threatCalSession.talentProfiles[profileId].tabs[1][1].rank==0)
 ''')
 print('PASS received talent layout is linked to saved calibration actor context')
+assert not any(msg.startswith('V~') for _,msg,_ in sent)
+b.execute('CAW_DPS_METER.requestTalentTrees({guid="0xA",name="Alpha"})')
+for i in range(35): tick(110+i*.1)
+cache=b.globals().CAW_DPS_METER.talentViewCache
+assert cache is not None and cache.guid=='0xA'
+assert cache.tabs[1].name=='Feral Combat' and cache.tabs[1].nodes[1].name=='Feral Instinct'
+assert cache.tabs[1].nodes[1].rank==0 and cache.tabs[2].nodes[2].column==2
+assert all(len(msg.encode())<=240 for _,msg,_ in sent if msg.startswith('V~'))
+assert len([msg for _,msg,_ in sent if msg.startswith('V~1~Q')])==1
+print('PASS talent names, icons, positions and ranks arrive from the owning client only on request; packets fit 240 bytes')
+# A forged/unsolicited tree must never replace the complete snapshot.
+b.execute('fire(CAW_DPS_METER.events,"CHAT_MSG_ADDON","CAWDPS2","V~1~B~0xA~0xB~123~8","RAID","Alpha")')
+assert b.globals().CAW_DPS_METER.talentViewCache.time==cache.time
+print('PASS unsolicited talent tree packets do not replace an accepted snapshot')
+b.execute('''
+local d=CAW_DPS_METER
+local actor={guid="0xA",name="Alpha",key="0xA",classToken="DRUID",damage=10,spells={Melee={damage=10}}}
+d.fightHistory={{name="Old fight",duration=10,actors={['0xA']=actor}}}
+d.openBreakdown(actor,{segment="history",segmentIndex=1,mode="damage"})
+this=d.breakdownPanel.talentButton; this.scripts.OnClick()
+assert(d.breakdownPanel.talentPane.trees[1].nodes[1].node.name=="Feral Instinct")
+assert(d.breakdownPanel.talentPane.trees[1].nodes[1].node.rank==0)
+''')
+a.globals().TALENT_RANK=2
+for i in range(12): tick(114+i*.1)
+b.execute('''
+local d=CAW_DPS_METER; d.refreshBreakdown()
+assert(d.breakdownPanel.talentPane.trees[1].nodes[1].node.rank==2)
+assert(string.find(d.breakdownPanel.talentPane.status:GetText(),"Not a snapshot",1,true))
+''')
+print('PASS remote tree renders another class and regular rank sync updates a respec without another metadata transfer')
+# A correctly addressed but incomplete/corrupt response cannot publish half a tree.
+b.execute('''
+local d=CAW_DPS_METER
+d.requestTalentTrees({guid="0xA",name="Alpha"},true)
+local req=d.talentViewRequest; assert(req)
+local prefix="V~1~"; local addr="~0xA~0xB~"..req.nonce
+fire(d.events,"CHAT_MSG_ADDON","CAWDPS2",prefix.."B"..addr.."~1","RAID","Alpha")
+fire(d.events,"CHAT_MSG_ADDON","CAWDPS2",prefix.."T"..addr.."~1~2~Test tree","RAID","Alpha")
+fire(d.events,"CHAT_MSG_ADDON","CAWDPS2",prefix.."N"..addr.."~1~1~99~1~1~3~Bad node~icon","RAID","Alpha")
+fire(d.events,"CHAT_MSG_ADDON","CAWDPS2",prefix.."E"..addr,"RAID","Alpha")
+assert(d.talentViewRequest and d.talentViewCache.tabs[1].name=="Feral Combat")
+''')
+print('PASS malformed or incomplete requested trees retain the previous complete snapshot')
 old=b.globals().CAW_DPS_METER.talentProfiles['0xA'].revision
 b.execute('fire(CAW_DPS_METER.events,"CHAT_MSG_ADDON","CAWDPS2","K~1~0xA~999999~1~2~33","PARTY","Alpha")')
 assert b.globals().CAW_DPS_METER.talentProfiles['0xA'].revision==old
@@ -81,10 +126,10 @@ b.execute('fire(CAW_DPS_METER.events,"CHAT_MSG_ADDON","CAWDPS2","K~1~0xA~999999~
 assert b.globals().CAW_DPS_METER.talentProfiles['0xA'].revision==old
 print('PASS partial or malformed profile does not replace the complete profile')
 for vm in clients.values(): vm.execute('PARTY_COUNT=0; UNITS.party1=nil; GetNumRaidMembers=function() return 0 end; UNITS.raid1=nil; UNITS.raid2=nil')
-tick(110)
+tick(117)
 assert a.globals().CAW_DPS_METER.talentProfiles['0xB'] is None
 assert b.globals().CAW_DPS_METER.talentProfiles['0xA'] is None
 before=len(sent)
-for i in range(8): tick(111+i)
+for i in range(8): tick(118+i)
 assert len(sent)==before
 print('PASS leaving the group clears profiles and stops broadcasts; all packets fit 255 bytes')

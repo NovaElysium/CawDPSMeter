@@ -278,6 +278,10 @@ check(result=='original-result' and second==17 and forwarded[4]=='recipient','re
 check(D.threatCalObservedRequest.targetGuid=='0xF1','observer captures actual outgoing request target')
 fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:100:100:1','PARTY','Hunter')
 local stableSnap=D.threatCalSession.snapshots[1]
+local cursor=stableSnap.modelEventCursor
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 5.')
+check(stableSnap.modelEventCursor==cursor and table.getn(D.threatCalSession.events)>cursor and stableSnap.rows[1].observedModel==100,'snapshot event cursor excludes a later hit at the same clock time')
+check(stableSnap.modelEventsDropped==0,'snapshot records whether replay events have been dropped')
 check(stableSnap.stableTargetCandidate and stableSnap.rows[1].observedModel==100 and stableSnap.rows[1].diff==nil and stableSnap.targetGuid==nil,'stable passive context stores provisional model separately')
 UNITS.target.guid='0xF2'; fire(D.threatCalFrame,'PLAYER_TARGET_CHANGED')
 UNITS.target.guid='0xF1'; fire(D.threatCalFrame,'PLAYER_TARGET_CHANGED')
@@ -332,6 +336,10 @@ PARTY_COUNT=1; UNITS.partypet1={guid='0x22',name='Other Pet'}
 check(D.threatGrowlValue({guid='0x22',isPet=true},14917)==146,'measured group pet rank 3 level 29 uses 146')
 check(D.threatGrowlValue({guid='0x99',isPet=true},14918)==170,'unresolved GUID cannot borrow another pet level')
 UnitLevel=function() return 34 end
+check(D.threatGrowlValue(petActor,14918)==186,'measured rank 4 level 34 uses 186 without server data')
+check(D.threatGrowlValue({guid='0x22',isPet=true},14918)==186,'level 34 correction also applies to GUID-matched group pet')
+check(D.threatGrowlValue(petActor,14917)==110,'level 34 correction does not change a different Growl rank')
+UnitLevel=function() return 35 end
 check(D.threatGrowlValue(petActor,14918)==170,'unmeasured level retains rank fallback after level change')
 UnitLevel=function() error('level unavailable') end
 check(D.threatGrowlValue(petActor,14918)==170,'level API failure retains fallback')
@@ -528,12 +536,13 @@ local headerWidth=scrollView.frame:GetWidth()
 for _,width in ipairs({160,190,260,360,440,900}) do
     scrollView.frame:SetWidth(width); D.layoutMultiWindow(scrollView)
     local used=5+scrollView.modeButton:GetWidth()+3+scrollView.segmentButton:GetWidth()+5
-    local buttons={scrollView.addButton,scrollView.reportButton,scrollView.lockButton,scrollView.resetButton,scrollView.closeButton}
-    for _,b in ipairs(buttons) do used=used+b:GetWidth() end
-    used=used+4*(width<260 and 2 or 3)+5
+    local buttons={scrollView.addButton,scrollView.reportButton,scrollView.lockButton,scrollView.resetButton,scrollView.closeButton,scrollView.optionsButton,scrollView.overflowButton}
+    local shown=0
+    for _,b in ipairs(buttons) do if b:IsShown() then used=used+b:GetWidth(); shown=shown+1 end end
+    used=used+(shown-1)*3+5
     check(used<=width and scrollView.modeText:GetWidth()<scrollView.modeButton:GetWidth() and scrollView.segmentText:GetWidth()<scrollView.segmentButton:GetWidth(),'header controls and labels fit inside width '..width)
 end
-check(scrollView.summary.lastPoint[1]=='BOTTOMLEFT' and not scrollView.toolbar:IsShown(),'status is separate from selectors and old toolbar is hidden')
+check(scrollView.summary.lastPoint[1]=='BOTTOMRIGHT' and not scrollView.toolbar:IsShown(),'status is separate from selectors and old toolbar is hidden')
 scrollView.frame:SetWidth(headerWidth); D.layoutMultiWindow(scrollView)
 local oldSorted=D.multiViewSortedActors
 local scrollList={}
@@ -658,7 +667,7 @@ check(serverView and D.threatValueForActor(serverView.actors[1])==777 and D.thre
 check(D.actors['0x1'].threat['0xF1']==100 and serverView.actors[1]._serverLocalValue==100,'server display leaves local threat untouched for calibration')
 check(table.getn(D.threatCalSession.snapshots)==1,'standalone reply also saved for calibration')
 NOW=NOW+1.3
-check(not D.serverThreatCurrent() and D.serverThreatActors()==D.actors,'expired server view returns explicitly to local estimates')
+check(not D.serverThreatCurrent() and not next(D.serverThreatActors()),'expired server view cannot silently substitute local estimates')
 NOW=NOW+2; D.threatCalSendRequest(); NOW=NOW+0.05
 D.threatCalMaxSnapshots=0
 fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:778:100:1','PARTY','Hunter')
@@ -670,6 +679,204 @@ UNITS.target.guid='0xF1'; D.threatCalObserveTarget()
 check(not D.serverThreatCurrent(),'switching back cannot revive old server snapshot')
 NOW=NOW+3; D.threatCalSendRequest(); NOW=NOW+0.05; D.threatCalAttributionUncertain=true
 fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:999:100:1','PARTY','Hunter')
-check(not D.serverThreatCurrent(),'uncertain timeout or parallel-probe state cannot publish server values')
+check(D.serverThreatCurrent() and D.threatValueForActor(D.serverThreatCurrent().actors[1])==999,'fresh server display recovers despite conservative calibration uncertainty')
+D.threatCalEnabled=false
+-- Live transport must remain independent from recording and model uncertainty.
+local savedSnapshots=table.getn(D.threatCalSession.snapshots)
+local savedRequests=D.threatCalSession.requests
+NOW=NOW+2
+check(D.threatCalSendRequest(),'server queries remain active with recording disabled')
+NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:1001:100:1','WHISPER','Hunter')
+check(D.serverThreatCurrent() and D.serverThreatCurrent().actors[1]._serverThreatValue==1001,'live response accepts TWThreat-compatible response channel independently of request channel')
+check(table.getn(D.threatCalSession.snapshots)==savedSnapshots and D.threatCalSession.requests==savedRequests,'recording off does not mutate the completed calibration session')
+NOW=NOW+2; D.threatCalSendRequest(); NOW=NOW+2
+local sentAfterTimeout=D.threatCalSendRequest()
+check(not sentAfterTimeout and not D.serverThreatCurrent() and D.serverThreatLabel()=='No server response','actual timeout clears stale display and reports missing server response')
+NOW=NOW+3; check(D.threatCalSendRequest(),'timeout backoff permits a later request without reload')
+NOW=NOW+0.05; fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:1002:100:1','PARTY','Hunter')
+check(D.serverThreatCurrent() and D.serverThreatCurrent().actors[1]._serverThreatValue==1002,'response after timeout restores live display without reload')
+IsAddOnLoaded=function(name) return name=='TWThreat' end
+local originalSend=SendAddonMessage; local originalObserver=D.threatCalSendObserver
+SendAddonMessage=function() end; D.threatCalSendObserver=nil; D.threatCalInstallObserver()
+NOW=NOW+2
+SendAddonMessage('TWT_UDTSv4','limit=4','PARTY')
+NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:3310:100:1;Tempered:0:1358:37:1;Mynnie:0:1320:36:0;Gyaat:0:1236:34:1','WHISPER','Hunter')
+local parallelView=D.serverThreatCurrent()
+check(parallelView and table.getn(parallelView.actors)==4 and parallelView.actors[1]._serverThreatValue==3310 and parallelView.actors[4]._serverThreatPercent==34,'TWThreat-owned response displays all server rows including actors absent from local engine')
+check(not D.threatCalSendRequest(),'parallel operation observes TWThreat instead of adding duplicate polling')
+local extra=D.multiWindows[2]; extra.mode='threat'; extra.segment='current'; extra.frame:Show(); D.updateMultiWindow(extra)
+check(extra.rows[1].actor._serverThreatValue==3310 and extra.rows[1].actor.name=='Hunter','extra threat window consumes server actors rather than local estimates')
+check(D.actors['0x1'].threat['0xF1']==100,'parallel server display never overwrites local engine state')
+local packet='TWTv4=Hunter:1:3310:100:1#TMTv1=unrelated'
+NOW=NOW+0.5; SendAddonMessage('TWT_UDTSv4_TM','limit=4','PARTY'); NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ',packet,'WHISPER','Hunter')
+check(D.serverThreatCurrent() and table.getn(D.serverThreatCurrent().actors)==1,'tank-mode suffix is separated from the threat table')
+local beforeMalformed=D.serverThreatSnapshot
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:invalid:100:1','WHISPER','Hunter')
+check(D.serverThreatSnapshot==beforeMalformed,'malformed numeric values cannot become zero-threat rows')
+NOW=NOW+0.5; SendAddonMessage('TWT_UDTSv4','limit=4','PARTY'); NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=','WHISPER','Hunter')
+check(D.serverThreatCurrent() and not next(D.serverThreatActors()),'empty server table clears previous actors')
+SendAddonMessage('TWT_UDTSv4','limit=4','PARTY')
+UNITS.target.guid='0xF2'; fire(D.threatCalFrame,'PLAYER_TARGET_CHANGED'); NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:9999:100:1','WHISPER','Hunter')
+check(not D.serverThreatCurrent(),'passive old-target reply cannot populate the newly selected enemy')
+UNITS.target.guid='0xF1'; fire(D.threatCalFrame,'PLAYER_TARGET_CHANGED'); NOW=NOW+2
+D.threatCalObservedRequest=nil
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:9998:100:1','PARTY','Hunter')
+check(not D.serverThreatCurrent(),'unsolicited rows without a locally observed request remain unassigned')
+-- Calibration remains useful in parallel mode without claiming a target ID.
+D.threatCalEnabled=true; D.threatCalNewSession(); D.threatCalAttributionUncertain=true
+NOW=NOW+3; SendAddonMessage('TWT_UDTSv4','limit=4','PARTY'); NOW=NOW+0.05
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:1200:100:1','WHISPER','Hunter')
+local recorded=D.threatCalSession.snapshots[1]
+check(D.serverThreatCurrent() and recorded and recorded.rows[1].server==1200 and recorded.rows[1].observedModel==100,'parallel live response also records server values and the separate local candidate')
+check(recorded.comparisonProvisional and recorded.rows[1].diff==nil and recorded.targetGuid==nil,'parallel calibration does not invent exact target or diff after uncertainty')
+local latest=D.serverThreatSnapshot
+NOW=NOW+0.10; SendAddonMessage('TWT_UDTSv4','limit=4','PARTY'); NOW=NOW+0.02
+fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:1200:100:1','WHISPER','Hunter')
+check(D.serverThreatSnapshot~=latest and table.getn(D.threatCalSession.snapshots)==2,'identical payload after a new observed request still refreshes live data')
+D.threatCalEnabled=false
+SendAddonMessage=originalSend; D.threatCalSendObserver=originalObserver; IsAddOnLoaded=function() return false end
+for _,row in ipairs({D.rows[1],extra.rows[1]}) do
+    row.bar:SetWidth(300); row.right:SetText('100'); row.actor={name='Pet',isPet=true,classToken='WARRIOR'}
+    D.fitBarActorName(row,'Pet',58)
+    check(row.classIcon:IsShown() and row.classIcon.texture=='Interface\\Icons\\Ability_Hunter_BeastTaming' and row.classIcon.texCoords[2]==1,'pet gets dedicated icon even when unit API reports warrior')
+    row.actor={name='Warrior',classToken='WARRIOR'}; D.fitBarActorName(row,'Warrior',58)
+    check(row.classIcon:IsShown() and row.classIcon.texture~='Interface\\Icons\\Ability_Hunter_BeastTaming','reused pet row restores player class texture')
+    row.actor={name='Pet',isPet=true}; row.bar:SetWidth(100); D.fitBarActorName(row,'Pet',58)
+    check(not row.classIcon:IsShown(),'narrow pet row still prioritizes readable name over icon')
+end
+local petClass,petUnit,petFlag=D.threatCalClassForName(UnitName('pet'))
+check(petClass==nil and petUnit=='pet' and petFlag,'server row class lookup identifies pet without warrior classification')
+local demonRow=D.rows[1]; demonRow.bar:SetWidth(300); demonRow.actor={name='Demon',isPet=true,petOwnerClass='WARLOCK'}
+D.fitBarActorName(demonRow,'Demon',58)
+check(demonRow.classIcon.texture=='Interface\\Icons\\Spell_Shadow_SummonFelHunter','server warlock pet uses demon symbol rather than hunter pet symbol')
+D.guidToActor['test-warlock']={classToken='WARLOCK'}
+check(D.petIconForActor({isPet=true,ownerKey='test-warlock'})=='Interface\\Icons\\Spell_Shadow_SummonFelHunter','local pet icon resolves warlock through owner identity')
+D.guidToActor['test-warlock']=nil
+local footerTarget=UNITS.target
+UNITS.target=nil
+check(D.serverThreatLabel()=='No target','threat footer shows missing target only once')
+UNITS.target=footerTarget; D.threatCalTimeoutStreak=0; D.serverThreatSnapshot=nil
+check(D.serverThreatLabel()=='Waiting for threat data','pending footer uses plain status text')
+extra.mode='threat'; extra.segment='current'; extra.frame:Show(); D.updateMultiWindow(extra)
+check(extra.summary:GetText()=='Waiting for threat data','extra footer does not append target to pending status')
+fresh()
+D.pendingSelfTotem={name='Stoneskin Totem',time=NOW}
+local searing=D.tryClaimSelfTotemSource('0xFA01','Searing Bolt','CHAT_MSG_SPELL_PET_DAMAGE')
+local nova=D.tryClaimSelfTotemSource('0xFA02','Fire Nova','CHAT_MSG_SPELL_PET_DAMAGE')
+check(searing and searing.name=='Searing Totem' and nova and nova.name=='Fire Nova Totem','simultaneous damaging totems do not inherit last Stoneskin cast name')
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_PET_DAMAGE',"0xFA01's Searing Bolt hits 0xF1 for 40.")
+D.pendingSelfTotem={name='Mana Spring Totem',time=NOW}
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_PET_DAMAGE',"0xFA01's Searing Bolt hits 0xF1 for 60.")
+check(D.actors['0xFA01'] and D.actors['0xFA01'].name=='Searing Totem' and D.actors['0xFA01'].damage==100 and D.actors['0xFA01'].isTotem,'hover source actor retains Searing identity and damage after another totem cast')
+check(not D.tryClaimSelfTotemSource('0xFA03','Unknown Item Spell','CHAT_MSG_SPELL_PET_DAMAGE'),'unknown summon spell is not assigned to last totem')
+D.threatCalEnabled=false
+check(not D.dpsLogActive,"missing DPSLog API keeps RAW producer")
+CombatLogGetCurrentEventInfo=function() return 'SWING_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,30,-1,1,0,0,0,'1' end
+D.dpsLogInitialized=nil; D.dpsLogRawCommitted=nil; D.dpsLogInitialize()
+check(D.dpsLogProbing and D.dpsLogFrame.events.COMBAT_LOG_EVENT_UNFILTERED,"DPSLog API registers optional event and probes delivery")
+fresh()
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 30.')
+check(not D.actors['0x1'] or D.actors['0x1'].damage==0,"RAW before structured event cannot double count")
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.actors['0x1'].damage==30 and D.actors['0x1'].crits==1 and D.currentEnemyDamage['0xF1']==30,"lazy structured melee maps amount crit and target once")
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 30.')
+check(D.actors['0x1'].damage==30 and D.actors['0x1'].threat['0xF1']==30,"RAW after structured event cannot double count damage or threat")
+D.dpsLogReceive('SPELL_PERIODIC_DAMAGE','0x1',nil,1,0,'0xF1','Mob',64,0,1978,'Serpent Sting',8,20,-1,8,0,0,0,nil)
+check(D.actors['0x1'].damage==50 and D.actors['0x1'].spells['Serpent Sting'].damage==20,"periodic damage preserves spell and unresolved source name")
+D.dpsLogReceive('SPELL_HEAL','0x1','Hunter',1,0,'0x1','Hunter',1,0,136,'Mend Pet',8,100,40,0,'1')
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_SELF_BUFF','Your Mend Pet critically heals Hunter for 100.')
+check(D.actors['0x1'].healing==60 and D.actors['0x1'].healCrits==1,"structured healing subtracts overheal and ignores duplicate RAW")
+D.dpsLogReceive('SPELL_PERIODIC_HEAL','0x1',nil,1,0,'0x1',nil,1,0,136,'Mend Pet',8,100,100,0,nil)
+check(D.actors['0x1'].healing==60,"full overheal adds no effective healing")
+D.dpsLogReceive('SPELL_SUMMON','0x1','Hunter',1,0,'0xFB01','Searing Totem',1,0,3599,'Searing Totem',4)
+D.dpsLogReceive('SPELL_SUMMON','0x1','Hunter',1,0,'0xFB02','Stoneskin Totem',1,0,8071,'Stoneskin Totem',8)
+D.dpsLogReceive('SPELL_DAMAGE','0xFB01',nil,1,0,'0xF1','Mob',64,0,3606,'Searing Bolt',4,50,-1,4,0,0,0,nil)
+check(D.actors['0xFB01'].name=='Searing Totem' and D.actors['0xFB01'].damage==50 and D.actors['0xFB01'].ownerKey=='0x1',"summon GUID preserves totem identity and owner after another summon")
+check(not D.actors['0xFB02'] or D.actors['0xFB02'].damage==0,"Stoneskin inherits no Searing damage")
+D.dpsLogReceive('SPELL_SUMMON','0x1','Hunter',1,0,'0xFB03','Mechanical Dragonling',1,0,123,'Summon Dragonling',1)
+check(D.guidToActor['0xFB03'].isPet and not D.guidToActor['0xFB03'].isTotem,"item summon gets explicit owner without being marked totem")
+D.dpsLogReceive('SPELL_SUMMON','0x99','Outsider',1,0,'0xFB04','Other Totem',1,0,3599,'Searing Totem',4)
+check(not D.guidToActor['0xFB04'],"outsider summon never joins roster")
+local prior=D.dpsLogRejected
+D.dpsLogReceive('SPELL_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,1,'Invalid',1,'bad')
+check(D.dpsLogRejected==prior+1 and D.actors['0x1'].damage==50,"malformed suffix rejected without altering totals")
+D.dpsLogReceive('UNIT_DIED','0x0000000000000000',nil,2147483648,0,'0xF1','Mob',64,0)
+check(D.dpsLogRejected==prior+1,"null source GUID is valid for source-less events")
+D.threatCalEnabled=true; D.threatCalNewSession()
+D.dpsLogReceive('SPELL_ENERGIZE','0xFB01',nil,1,0,'0x1','Hunter',1,0,5677,'Mana Spring',8,20,0)
+local evs=D.threatCalSession.events
+check(evs[table.getn(evs)].kind=='power-observation' and evs[table.getn(evs)].amount==20,"resource events use bounded calibration without inventing threat")
+D.dpsLogReceive('SPELL_DAMAGE','0x1',nil,1,0,'0xF1','Mob',64,0,75,'Auto Shot',1,10,-1,1,0,0,0,nil)
+local found=false
+for _,e in ipairs(D.threatCalSession.events) do if e.combatEvent and e.combatEvent.spellId==75 then found=true end end
+check(found and D.dpsLogCurrent==nil,"local threat calibration retains structured spell and target context")
+D.threatCalEnabled=false; D.dpsLogActive=false
+D.dpsLogInitialized=nil; D.dpsLogRawCommitted=nil; D.dpsLogInitialize(); fresh()
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 19.')
+NOW=NOW+0.6; D.dpsLogFrame.scripts.OnUpdate()
+check(not D.dpsLogActive and not D.dpsLogProbing and D.actors['0x1'].damage==19,"API without event delivery replays RAW and falls back")
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.actors['0x1'].damage==19,"late structured event cannot duplicate fallback damage")
+CombatLogGetCurrentEventInfo=nil
+fresh(); fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 17.')
+check(D.actors['0x1'].damage==17,"legacy RAW remains functional without optional backend")
+local function resetDpsDiscovery()
+    D.dpsLogInitialized=nil; D.dpsLogRawCommitted=nil; D.dpsLogActive=false
+    D.dpsLogProbing=false; D.dpsLogRegistered=false; D.dpsLogNextCheck=0
+    D.dpsLogInitialApiType=nil; D.dpsLogInitAttempts=0
+    CombatLogGetCurrentEventInfo=nil
+    D.dpsLogInitialize()
+end
+resetDpsDiscovery(); D.threatCalEnabled=true; D.threatCalNewSession()
+check(not D.dpsLogInitialized and D.threatCalSession.dpsLogStatus.apiType=='nil'
+    and D.threatCalSession.dpsLogStatus.received~=nil,'absent startup API is retryable and saved even without events')
+local lateApi=function() return 'SWING_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,23,-1,1,0,0,0,nil end
+CombatLogGetCurrentEventInfo=lateApi
+fire(D.dpsLogFrame,'PLAYER_ENTERING_WORLD')
+check(D.dpsLogProbing and D.threatCalSession.dpsLogStatus.initialApiType=='nil'
+    and D.threatCalSession.dpsLogStatus.apiType=='function','world entry detects API published after addon load')
+fresh(); fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 23.')
+fire(D.dpsLogFrame,'PLAYER_ENTERING_WORLD')
+check(table.getn(D.dpsLogQueue)==1,'repeated world entry preserves pending probe and queued RAW')
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.dpsLogActive and D.actors['0x1'].damage==23,'late API delivers first hit once after queued RAW')
+resetDpsDiscovery(); CombatLogGetCurrentEventInfo=lateApi
+D.dpsLogFrame.scripts.OnUpdate()
+check(D.dpsLogProbing,'timer discovers API published after world entry')
+resetDpsDiscovery(); fresh(); CombatLogGetCurrentEventInfo=lateApi
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 23.')
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.dpsLogActive and D.actors['0x1'].damage==23,'first RAW checks late API before committing any amount')
+resetDpsDiscovery(); fresh()
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 23.')
+CombatLogGetCurrentEventInfo=lateApi
+fire(D.dpsLogFrame,'PLAYER_ENTERING_WORLD'); fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(not D.dpsLogActive and D.actors['0x1'].damage==23
+    and string.find(D.dpsLogFallback,'reload required',1,true),'API arriving after counted RAW cannot silently switch or duplicate')
+fire(D.threatCalFrame,'PLAYER_LOGOUT')
+check(D.threatCalSession.dpsLogStatus.rawCommitted and D.threatCalSession.dpsLogStatus.apiType=='function'
+    and D.threatCalSession.dpsLogStatus.fallback==D.dpsLogFallback,'logout saves actual API availability and reason for RAW input')
+resetDpsDiscovery(); CombatLogGetCurrentEventInfo=lateApi
+local register=D.dpsLogFrame.RegisterEvent
+D.dpsLogFrame.RegisterEvent=function() error('event unavailable') end
+D.dpsLogInitialize()
+check(not D.dpsLogInitialized and string.find(D.dpsLogRegistrationError,'event unavailable',1,true),'failed event registration records error and remains retryable')
+D.dpsLogFrame.RegisterEvent=register; D.dpsLogInitialize()
+check(D.dpsLogProbing and D.dpsLogRegistrationError==nil,'event registration can recover after delayed availability')
+GetWeirdUtilsVersion=function(name) if name=='logsessions' then return '1.1.0' end end
+NOW=NOW+1
+local moduleSession={}; D.dpsLogSaveStatus(moduleSession)
+check(moduleSession.dpsLogStatus.modules.versions.logsessions=='1.1.0'
+    and moduleSession.dpsLogStatus.modules.versions.dpslog=='not reported','module status distinguishes missing DPSLog from registered sibling DLL')
+GetWeirdUtilsVersion=function() error('version query failed') end
+NOW=NOW+1
+D.dpsLogSaveStatus(moduleSession)
+check(moduleSession.dpsLogStatus.modules.versions.dpslog=='query failed','DLL version query errors do not break calibration')
+GetWeirdUtilsVersion=nil
 D.threatCalEnabled=false
 print("Checks: "..count)

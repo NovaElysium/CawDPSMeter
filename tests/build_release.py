@@ -1,18 +1,22 @@
 """Package only public runtime files; verify archive bytes and produce SHA-256."""
 from pathlib import Path
+import argparse
 import hashlib
 import re
 import shutil
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+parser=argparse.ArgumentParser()
+parser.add_argument('--sync-checkout', action='store_true')
+args=parser.parse_args()
 toc = (ROOT / 'CawDPSMeter.toc').read_text(encoding='utf-8')
 # The installed maintainer copy keeps its private overlay. Public builds exclude
 # both its loader entry and source, including the talent-status display.
 private_files = {'CawLocalSyncStatus.lua'}
 toc = '\n'.join(line for line in toc.splitlines() if line.strip() not in private_files) + '\n'
 version = re.search(r'^## Version: (.+)$', toc, re.M).group(1).strip()
-assert version == '1.0.9'
+assert version == '1.1.0'
 assert f'D.version = "{version}"' in (ROOT / 'CawDPSMeter.lua').read_text(encoding='utf-8')
 runtime = [line.strip() for line in toc.splitlines() if line.strip() and not line.startswith('#')]
 assert 'CawLocalSyncStatus.lua' not in runtime, 'Local-only status display enabled: do not publish this personal TOC.'
@@ -52,13 +56,13 @@ shutil.copyfile(ROOT / f'RELEASE_NOTES_{version}.md', out / f'RELEASE_NOTES_{ver
 
 # Populate an already-cloned public checkout, never copy saved data/private notes.
 checkout = ROOT / '.release' / 'github-source'
-if (checkout / '.git').is_dir():
+if args.sync_checkout and (checkout / '.git').is_dir():
     for name in files:
         dst = checkout / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(public_bytes(name))
     for src in (ROOT / 'tests').iterdir():
-        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py'):
+        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua'):
             dst = checkout / 'tests' / src.name
             dst.parent.mkdir(exist_ok=True)
             shutil.copyfile(src, dst)

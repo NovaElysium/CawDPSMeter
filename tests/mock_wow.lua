@@ -27,11 +27,24 @@ local methods={}
 function methods:SetScript(k,v) self.scripts[k]=v end
 function methods:GetScript(k) return self.scripts[k] end
 function methods:RegisterEvent(k) self.events[k]=true end
-function methods:Show() self.shown=true end
-function methods:Hide() self.shown=false end
+function methods:Show()
+    if self.shown then return end
+    self.shown=true
+    if self.scripts.OnShow then local previous=this; this=self; self.scripts.OnShow(); this=previous end
+end
+function methods:Hide()
+    if not self.shown then return end
+    self.shown=false
+    if self.scripts.OnHide then local previous=this; this=self; self.scripts.OnHide(); this=previous end
+end
 function methods:IsShown() return self.shown end
 function methods:SetAlpha(alpha) self.alpha=alpha end
+function methods:SetTexture(texture) self.texture=texture end
+function methods:SetTexCoord(...) self.texCoords=arg end
 function methods:GetAlpha() return self.alpha or 1 end
+function methods:SetScale(v) self.scale=v end
+function methods:GetScale() return self.scale or 1 end
+function methods:GetEffectiveScale() return (self.scale or 1)*(self.parent and self.parent:GetEffectiveScale() or 1) end
 function methods:IsVisible() return self.shown and (not self.parent or self.parent:IsVisible()) end
 function methods:SetParent(parent) self.parent=parent end
 function methods:GetParent() return self.parent end
@@ -58,6 +71,22 @@ function methods:SetFrameStrata(strata) self.strata=strata end
 function methods:GetName() return self.name end
 function methods:SetText(v) self.text=v end
 function methods:GetText() return self.text end
+function methods:Enable() self.enabled=true end
+function methods:Disable() self.enabled=false end
+function methods:IsEnabled() return self.enabled~=false end
+function methods:SetFont(path,size) self.fontPath=path; self.fontSize=size end
+function methods:SetBackdrop(v) self.backdrop=v end
+function methods:SetBackdropColor(...) self.backdropColor=arg end
+function methods:SetBackdropBorderColor(...) self.borderColor=arg end
+function methods:SetValue(v) self.mockValue=v end
+function methods:GetValue() return self.mockValue or 0 end
+function methods:SetMinMaxValues(lo,hi) self.minimum=lo; self.maximum=hi end
+function methods:SetChecked(v) self.checked=v end
+function methods:GetChecked() return self.checked end
+function methods:SetThumbTexture(path)
+    self.thumb=self:CreateTexture(); self.thumb:SetTexture(path)
+end
+function methods:GetThumbTexture() return self.thumb end
 function methods:GetStringWidth() return string.len(self.text or "")*6 end
 function methods:NumLines() return 0 end
 local function noop() end

@@ -4,7 +4,7 @@
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
 
-D.threatCalibrationVersion = "RC37-10"
+D.threatCalibrationVersion = "RC37-13"
 D.threatCalEnabled = false
 D.threatCalNextRequest = 0
 D.threatCalRequests = 0
@@ -43,7 +43,7 @@ function D.threatCalTarget()
 end
 
 function D.threatCalApiEligible()
-    if not D.threatCalEnabled then return false,"logger off" end
+    -- Live server threat also works when calibration recording is disabled.
     local channel=nil
     if GetNumRaidMembers and GetNumRaidMembers()>0 then channel="RAID"
     elseif GetNumPartyMembers and GetNumPartyMembers()>0 then channel="PARTY" end
@@ -95,6 +95,7 @@ function D.threatCalClassForName(name)
     local _,u
     for _,u in units do
         if UnitName and UnitName(u)==name then
+            if u=="pet" or string.find(u,"^partypet%d+$") or string.find(u,"^raidpet%d+$") then return nil,u,true end
             local _,classToken=UnitClass(u)
             return classToken,u
         end
@@ -118,6 +119,8 @@ function D.threatCalNewSession()
         startedGameTime=D.threatCalNow(),
         addonVersion=D.version,
         modelVersion=D.threatModelVersion,
+        combatInput=D.dpsLogActive and "DPSLog+RAW-utility" or "RAW",
+        dpsLogAdapterVersion=D.dpsLogVersion,
         loggerVersion=D.threatCalibrationVersion,
         player=(UnitName and UnitName("player")) or "?",
         events={},casts={},snapshots={},transport={},feignRaw={},targets={},requestContexts={},actorContexts={},
@@ -128,6 +131,7 @@ function D.threatCalNewSession()
     -- Keep a practical rolling history. Older sessions can be supplied separately if needed.
     while table.getn(db.sessions)>12 do table.remove(db.sessions,1) end
     D.threatCalSession=s
+    if D.dpsLogSaveStatus then D.dpsLogSaveStatus(s) end
     D.threatCalActorContextCache={}
     return s
 end
@@ -243,29 +247,31 @@ function D.threatCalStart()
 end
 
 function D.threatCalObserveTarget()
-    if not D.threatCalEnabled or not D.threatCalSession then return end
     local guid,name,classification=D.threatCalTarget()
     local now=D.threatCalNow(); local state=D.threatCalTargetState
     if not state or state.guid~=guid or state.segmentSerial~=(D.segmentSerial or 0) then
         state={guid=guid,name=name,classification=classification,since=now,generation=(state and state.generation or 0)+1,segmentSerial=D.segmentSerial or 0}
         D.threatCalTargetState=state
-        local s=D.threatCalSession
-        s.targets=s.targets or {}
-        if table.getn(s.targets)<6000 then
-            table.insert(s.targets,{t=now-(s.startedGameTime or 0),guid=guid,name=name,generation=state.generation,segmentSerial=state.segmentSerial})
-        else s.droppedTargetContexts=(s.droppedTargetContexts or 0)+1 end
+        local s=D.threatCalEnabled and D.threatCalSession
+        if s then
+            s.targets=s.targets or {}
+            if table.getn(s.targets)<6000 then
+                table.insert(s.targets,{t=now-(s.startedGameTime or 0),guid=guid,name=name,generation=state.generation,segmentSerial=state.segmentSerial})
+            else s.droppedTargetContexts=(s.droppedTargetContexts or 0)+1 end
+        end
     end
     return state
 end
 
 function D.threatCalObserveRequest(prefix,payload,channel)
-    if not D.threatCalEnabled or not D.threatCalSession then return end
     if prefix~="TWT_UDTSv4" and prefix~="TWT_UDTSv4_TM" then return end
     local state=D.threatCalObserveTarget(); local now=D.threatCalNow()
-    local s=D.threatCalSession
-    s.observedRequests=(s.observedRequests or 0)+1
-    local rec={serial=s.observedRequests,t=now-(s.startedGameTime or 0),sentAt=now,prefix=prefix,payload=string.sub(tostring(payload or ""),1,80),channel=channel,targetGuid=state.guid,target=state.name,targetGeneration=state.generation,segmentSerial=state.segmentSerial,stableFor=now-state.since}
+    local s=D.threatCalEnabled and D.threatCalSession
+    D.threatCalObservedSerial=(D.threatCalObservedSerial or 0)+1
+    local rec={serial=D.threatCalObservedSerial,t=now-((s and s.startedGameTime) or now),sentAt=now,prefix=prefix,payload=string.sub(tostring(payload or ""),1,80),channel=channel,targetGuid=state.guid,target=state.name,targetGeneration=state.generation,segmentSerial=state.segmentSerial,stableFor=now-state.since}
     D.threatCalObservedRequest=rec
+    if not s then return end
+    s.observedRequests=(s.observedRequests or 0)+1
     s.requestContexts=s.requestContexts or {}
     if table.getn(s.requestContexts)<6000 then table.insert(s.requestContexts,rec)
     else s.droppedRequestContexts=(s.droppedRequestContexts or 0)+1 end
@@ -316,6 +322,10 @@ function D.threatCalRecordEvent(rec)
     local t=D.threatCalSession.events
     if table.getn(t)>=D.threatCalMaxEvents then D.threatCalLimit("droppedEvents","CAL_EVENT_LIMIT"); return end
     rec.t=D.threatCalNow()-(D.threatCalSession.startedGameTime or 0)
+    if D.dpsLogCurrent then
+        rec.input="DPSLog"
+        rec.combatEvent=D.dpsLogCurrent
+    end
     rec.segmentSerial=D.segmentSerial or 0
     rec.actorContextId=D.threatCalActorContext(rec.guid,rec.source=="Growl")
     table.insert(t,rec)
@@ -348,13 +358,16 @@ function D.threatCalParseResponse(msg)
     local p=string.find(msg,"TWTv4=",1,true)
     if not p then return nil end
     local body=string.sub(msg,p+6)
+    local suffix=string.find(body,"#",1,true)
+    if suffix then body=string.sub(body,1,suffix-1) end
     local rows={}
     local chunk
     for chunk in string.gfind(body,"([^;]+)") do
         local _,_,name,tank,threat,perc,melee,extra=string.find(chunk,"^([^:]*):([^:]*):([^:]*):([^:]*):([^:]*):?(.*)$")
-        if name and tank and threat and perc and melee then
-            table.insert(rows,{name=name,tank=(tank=="1"),threat=tonumber(threat) or 0,percent=tonumber(perc) or 0,melee=(melee=="1"),extra=extra})
-        end
+        local value,pct=tonumber(threat),tonumber(perc)
+        if not name or name=="" or not value or value<0 or not pct or pct<0 or
+            (tank~="0" and tank~="1") or (melee~="0" and melee~="1") then return nil end
+        table.insert(rows,{name=name,tank=(tank=="1"),threat=value,percent=pct,melee=(melee=="1"),extra=extra})
     end
     return rows
 end
@@ -385,7 +398,7 @@ function D.threatCalTakeRequestForResponse()
 end
 
 function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
-    if not D.threatCalEnabled or not D.threatCalSession then return end
+    local session=D.threatCalEnabled and D.threatCalSession
     local now=D.threatCalNow()
     local state=D.threatCalObserveTarget()
     local observed=D.threatCalObservedRequest
@@ -404,19 +417,20 @@ function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
     -- outgoing group channel. Keep rows, but do not claim exact attribution.
     local channelMismatch=pending and channel and channel~=pending.channel
     -- TWThreat may be running in parallel, so identical server snapshots can arrive twice.
-    if D.threatCalLastPayload==msg and now-(D.threatCalLastPayloadAt or 0)<0.20 then
+    if not pending and D.threatCalLastPayload==msg and now-(D.threatCalLastPayloadAt or 0)<0.20 and
+        (not observed or observed.serial==D.threatCalLastResponseObservedSerial) then
         D.threatCalDuplicateResponses=(D.threatCalDuplicateResponses or 0)+1
-        D.threatCalSession.duplicateResponses=(D.threatCalSession.duplicateResponses or 0)+1
+        if session then session.duplicateResponses=(session.duplicateResponses or 0)+1 end
         return
     end
-    D.threatCalLastPayload=msg; D.threatCalLastPayloadAt=now
     local rows=D.threatCalParseResponse(msg)
     if not rows then return end
-    local snaps=D.threatCalSession.snapshots
+    D.threatCalLastPayload=msg; D.threatCalLastPayloadAt=now
+    D.threatCalLastResponseObservedSerial=observed and observed.serial
     local req=D.threatCalTakeRequestForResponse()
     if not req then
         D.threatCalUnmatchedResponses=(D.threatCalUnmatchedResponses or 0)+1
-        if D.threatCalSession then D.threatCalSession.unmatchedResponses=(D.threatCalSession.unmatchedResponses or 0)+1 end
+        if session then session.unmatchedResponses=(session.unmatchedResponses or 0)+1 end
         -- Passive capture is needed when TWThreat owns the requests. Never
         -- substitute the player's current target for an unknown response target.
         req={segmentSerial=D.segmentSerial or 0}
@@ -424,7 +438,15 @@ function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
     local tg,tn,tc=req.targetGuid,req.target,req.classification
     local uncertain=not req.serial or channelMismatch or D.threatCalAttributionUncertain or req.segmentSerial~=(D.segmentSerial or 0) or req.targetGuid~=state.guid or (req.targetGeneration and req.targetGeneration~=state.generation) or (IsAddOnLoaded and IsAddOnLoaded("TWThreat"))
 
-    if D.serverThreatPublish then D.serverThreatPublish(rows,req,state,uncertain) end
+    -- Display follows a recent locally observed request (including TWThreat).
+    -- Calibration keeps its stricter uncertainty flags and never overwrites the model.
+    local displayReq=req.serial and req or observed
+    if D.serverThreatPublish then D.serverThreatPublish(rows,displayReq,state) end
+    if displayReq and now-displayReq.sentAt<=1.25 then
+        D.threatCalTimeoutStreak=0; D.threatCalApiRetryAt=0
+    end
+    if not session then return end
+    local snaps=session.snapshots
     if table.getn(snaps)>=D.threatCalMaxSnapshots then D.threatCalLimit("droppedSnapshots","CAL_SNAPSHOT_LIMIT"); return end
     local out={t=now-(D.threatCalSession.startedGameTime or 0),requestSerial=req.serial,requestAge=now-(req.sentAt or now),targetGuid=tg,target=tn,classification=tc,rows={}}
     out.prefix=prefix; out.channel=channel; out.sender=sender
@@ -432,6 +454,10 @@ function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
     out.requestTargetGuid=tg; out.requestTarget=tn
     out.targetAttribution="request-context-only"
     out.comparisonProvisional=true
+    -- GetTime can be identical for a response and the next combat event.
+    -- Preserve the recorded event boundary without inventing server correlation.
+    out.modelEventCursor=table.getn(session.events or {})
+    out.modelEventsDropped=session.droppedEvents or 0
     out.captureMode=req.serial and "own-request" or "passive"
     out.channelMismatch=channelMismatch and true or false
     out.observedRequestSerial=observed and observed.serial or nil
@@ -492,8 +518,8 @@ function D.threatCalSendRequest()
         D.threatCalLastTimeoutAt=now
         D.threatCalAttributionUncertain=true
         D.threatCalTimeoutStreak=(D.threatCalTimeoutStreak or 0)+1
-        D.threatCalApiRetryAt=now+math.min(60,2^math.min(D.threatCalTimeoutStreak,6))
-        if D.threatCalSession then D.threatCalSession.timedOutRequests=(D.threatCalSession.timedOutRequests or 0)+1 end
+        D.threatCalApiRetryAt=now+math.min(5,2^math.min(D.threatCalTimeoutStreak,3))
+        if D.threatCalEnabled and D.threatCalSession then D.threatCalSession.timedOutRequests=(D.threatCalSession.timedOutRequests or 0)+1 end
         D.threatCalTrace("transport",{kind="timeout",serial=pending.serial,targetGuid=pending.targetGuid,retryIn=D.threatCalApiRetryAt-now})
         if D.threatCalTimeoutStreak==1 and D.diagCal then D.diagCal("API_TIMEOUT","Threat API request timed out; retries use bounded backoff.") end
         if D.threatCalTimeoutStreak==3 and DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffff00Caw:|r No matching server threat response. Local recording continues; API retries slowed.") end
@@ -512,12 +538,12 @@ function D.threatCalSendRequest()
     local tg,tn,tc=D.threatCalTarget()
     if not tg then if D.diagCal then D.diagCal("TARGET_GUID","Eligible threat target has no usable GUID.") end; return false,"target guid unavailable" end
     -- TWThreat 1.3.0 defaults to five visible bars and requests visibleBars-1.
-    local success,err=pcall(sender,"TWT_UDTSv4","limit=4",channel)
-    if not success then if D.diagWarn then D.diagWarn("API_SEND_ERROR",tostring(err),"channel="..tostring(channel)) end; return false,tostring(err) end
     D.threatCalQueueRequest(tg,tn,tc,channel)
+    local success,err=pcall(sender,"TWT_UDTSv4","limit=4",channel)
+    if not success then D.threatCalObservedRequest=nil; D.threatCalPendingRequests={}; if D.diagWarn then D.diagWarn("API_SEND_ERROR",tostring(err),"channel="..tostring(channel)) end; return false,tostring(err) end
     D.threatCalTrace("transport",{kind="request",prefix="TWT_UDTSv4",payload="limit=4",channel=channel,targetGuid=tg,target=tn,serial=D.threatCalRequestSerial})
     D.threatCalRequests=(D.threatCalRequests or 0)+1
-    if D.threatCalSession then D.threatCalSession.requests=(D.threatCalSession.requests or 0)+1 end
+    if D.threatCalEnabled and D.threatCalSession then D.threatCalSession.requests=(D.threatCalSession.requests or 0)+1 end
     return true,nil
 end
 
@@ -583,6 +609,7 @@ F:SetScript("OnEvent",function()
     if event=="ADDON_LOADED" then
         if arg1=="CawDPSMeter" or arg1==nil then D.threatCalEnsureDB() end
     elseif event=="PLAYER_ENTERING_WORLD" then
+        D.threatCalInstallObserver()
         CawDPSMeterCharDB=CawDPSMeterCharDB or {}
         if CawDPSMeterCharDB.threatCalAutoStart==nil then CawDPSMeterCharDB.threatCalAutoStart=true end
         if CawDPSMeterCharDB.threatCalAutoStart and not D.threatCalEnabled then
@@ -593,13 +620,14 @@ F:SetScript("OnEvent",function()
         if D.threatCalEnabled and ((arg1 and string.find(string.lower(tostring(arg1)),"twt",1,true)) or (arg2 and string.find(tostring(arg2),"TWTv",1,true))) then
             D.threatCalTrace("transport",{kind="candidate-response",prefix=arg1,channel=arg3,sender=arg4,payload=string.sub(tostring(arg2 or ""),1,400)})
         end
-        if D.threatCalEnabled and arg2 and string.find(tostring(arg2),"TWTv4=",1,true) then D.threatCalRecordSnapshot(tostring(arg2),arg1,arg3,arg4) end
+        if arg2 and string.find(tostring(arg2),"TWTv4=",1,true) then D.threatCalRecordSnapshot(tostring(arg2),arg1,arg3,arg4) end
     elseif event=="PLAYER_TARGET_CHANGED" then
         D.threatCalObserveTarget()
     elseif event=="UNIT_CASTEVENT" then
         if D.threatCalEnabled then D.threatCalRecordCast(arg1,arg2,arg3,arg4) end
     elseif event=="PLAYER_LOGOUT" then
         if D.threatCalSession and D.threatCalEnabled then
+            if D.dpsLogSaveStatus then D.dpsLogSaveStatus(D.threatCalSession) end
             D.threatCalSession.endedAt=D.threatCalStamp()
             D.threatCalSession.stopReason="logout"
         end
@@ -607,7 +635,7 @@ F:SetScript("OnEvent",function()
 end)
 
 F:SetScript("OnUpdate",function()
-    if D.threatCalEnabled and D.threatCalNow()>=(D.threatCalNextRequest or 0) then
+    if D.savedVariablesReady and D.threatCalNow()>=(D.threatCalNextRequest or 0) then
         D.threatCalNextRequest=D.threatCalNow()+0.50
         D.threatCalObserveTarget()
         D.threatCalSendRequest()

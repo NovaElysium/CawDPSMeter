@@ -31,6 +31,43 @@ via SuperWoW, so it tracks combat events the default combat log never exposes, a
 it can pull data from other players running the addon to fill in what your client
 did not see. Up to four independent windows share the same combat data.
 
+## Interface in 1.1.0
+
+Left-click a player bar for an ability breakdown with player and segment selection.
+Use the sliders icon (or **... > Settings** in a narrow window), right-click a player bar, or type `/cawoptions` for
+window scale, size, bar spacing, text, transparency and pfUI docking options.
+Each window has its own appearance. New windows fit five bars; existing layouts
+are kept. Overall contains completed fights and stays selected when combat starts.
+Meters use near-black pfUI-style surfaces, fine borders and muted gold highlights.
+Dropdown labels use larger, bright text; window transparency remains adjustable.
+Settings use sliders, number fields and checkboxes, with a preview and a window
+selector. Player details keep spells, players and segments in separate lists;
+the statistics on the right follow the selected spell and mode. Report and reset
+are available through their header buttons or the **...** menu in narrow windows.
+Small meters keep just the mode, encounter selector and **...** in the header.
+Encounter menus fit their entries; scrolling controls appear above and below the
+list only when needed. Hover a selector to read the full selected label.
+Very narrow player bars show a shortened amount (Threat shows its percentage)
+to preserve player names. Widening the meter restores your rate/share settings.
+Hover or open player details for the full data.
+Footer totals and rates use k/M abbreviations and adapt to the available width.
+Their tooltip keeps the full total and DPS/HPS to one decimal, including when
+the group reaches millions of damage or healing.
+
+Drag the footer or empty window background to move a meter. **Shift-drag a
+player bar** also moves it; an ordinary click still opens player details.
+Locked and pfUI-docked windows cannot be moved this way. The bottom-right grip
+continues to resize the window.
+Whisper reports open an editable recipient field, prefilled from your player target.
+In player details, **Talents** beside the search field switches to talent trees.
+Your own trees come from the client API. Viewing group members' complete trees
+requires this feature on both clients; older clients may supply only point totals.
+The view shows current or last received talents, not the build used in an old fight.
+
+The optional DPSLog backend needs a compatible DLL installed separately. Collection
+and talent sync continue independently of the visible UI. See
+[1.1.0 release notes](RELEASE_NOTES_1.1.0.md) for available statistics and validation.
+
 ## Features
 
 - **Damage & DPS** and **Healing & HPS**, with per-spell breakdown; pet damage
@@ -44,15 +81,15 @@ did not see. Up to four independent windows share the same combat data.
 - **Caw Sync:** shares damage and healing snapshots with other users over
   SuperAPI addon messages, so late joiners and missed events still get full
   numbers (damage taken and deaths are local to your client)
-- **Chat reports** to Say, Party, Raid or Guild from the in-window Report button
+- **Chat reports** to Say, Party, Raid, Guild or Whisper from the in-window Report button
 - Up to **4 independent meter windows**, each with its own mode, segment,
   position, size, scroll offset and lock state
 - **Optional pfUI docking:** right-click a window's lock icon to dock it into the
   pfUI right chat; multiple docked windows sit edge-to-edge and follow the chat
   arrow. No pfUI files are modified
-- **Experimental Threat view** with per-target ability accounting, automatic peer
-  discovery and talent-rank exchange, plus an optional server-reference display
-  that does not require TWThreat
+- **Threat view** with live server values on supported servers, independent of
+  TWThreat. The experimental local model runs alongside it for calibration,
+  with automatic peer discovery and talent-rank exchange
 - Compact narrow-window layout with adaptive actor-name truncation to keep values
   readable
 - Persistent window layout, lock state and selected mode
@@ -64,7 +101,7 @@ did not see. Up to four independent windows share the same combat data.
 | WoW 1.12 client | RavenCraft / OctoWoW / Vanilla private servers |
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
-| pfUI | optional — enables right-chat docking |
+| pfUI | optional â€” enables right-chat docking |
 
 Without SuperWoW loaded the meter will not receive raw combat data.
 
@@ -75,8 +112,9 @@ Without SuperWoW loaded the meter will not receive raw combat data.
    `<WoW>\Interface\AddOns\CawDPSMeter\`
    (the folder must be named `CawDPSMeter`, not `CawDPSMeter-main`).
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
-4. Restart the client (version 1.0.9 adds `CawHeader.lua`, so `/reload` alone is not
-   enough on first update), then type `/cd`. Existing settings are kept.
+4. Restart the client after updating to 1.1.0 so the new UI and data modules load;
+   `/reload` alone is not enough on the first update. Type `/cd` to show the meter.
+   Existing settings are kept.
 
 > GitHub's green **Code** then **Download ZIP** button produces a wrongly named
 > folder. Use a tagged release, or rename the folder to `CawDPSMeter` after
@@ -84,8 +122,8 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 
 ## Windows and pfUI
 
-Version 1.0.9 puts selectors and buttons in a single compact header, gives encounter
-names more space, and moves totals and Threat status into a reserved footer.
+Version 1.1.0 keeps selectors and buttons in a single compact header, gives encounter
+names more space, and keeps totals and Threat status in a reserved footer.
 A persistent watermark sits behind the player bars without intercepting clicks.
 
 Shift-right-click any lock icon to switch visibility modes for all docked windows.
@@ -129,22 +167,30 @@ threat formulas. Up to 200 distinct received actor/layout combinations per
 calibration session are retained. Talent data is exchanged only with the current
 party/raid; nothing is uploaded automatically.
 
+The optional talent viewer also requests names, icons and tree positions from
+the selected group member. These separate messages run only on demand, at most
+ten packets per second, and stay within 240 bytes. A complete response replaces
+the previous displayed tree atomically. Only the most recently viewed remote
+tree is cached in memory; the normal calibration packet format is unchanged.
+Tooltips currently show the talent name and rank. Prerequisite connections and
+full talent descriptions are not included yet.
+
 ### Standalone server reference
 
-Disable TWThreat and restart the client to load `CawServerThreat.lua`. With
-calibration enabled (the default), Caw queries the server for hostile NPC combat
-targets while in a party/raid. The current Threat view automatically shows
-`Server reference*` when a recent own-request snapshot passes target/segment
-checks; otherwise it shows `Local estimate`. History/overall remain local. The
-tooltip identifies the source and, when matched, the parallel local value.
+Caw queries supported servers for hostile NPC combat targets while in a
+party/raid. TWThreat is not required, and live display also works when calibration
+recording is disabled. The current Threat view shows recent server rows for the
+selected target; it does not substitute local estimates when a reply is missing.
+The footer shows the target, a waiting state or no server response. History and
+Overall remain local. The local model continues independently for comparison.
 
-The request uses `limit=4`, matching the tested TWThreat default request; the
-display contains the returned rows, not a guaranteed full raid table. The target
-must have been stable for two seconds at request time; snapshots expire after 1.25
-seconds. TWTv4 has no target/request ID, so even accepted context is provisional.
-After a timeout or parallel-probe ambiguity, server display is suppressed until
-reload. With TWThreat loaded, Caw keeps passive calibration and local display
-instead.
+Requests use `limit=4`, matching the tested TWThreat default request, and recent
+snapshots expire after 1.25 seconds. The returned rows are not a guaranteed full
+raid table. TWTv4 has no response target/request ID, so target attribution remains
+provisional. Timeouts trigger bounded retries; uncertain recordings are marked
+accordingly. With TWThreat loaded, Caw pauses its own requests and observes that
+addon's replies, displaying them only when a recent observed request matches the
+current target context.
 
 ## Local calibration recordings
 
@@ -177,7 +223,7 @@ names and GUIDs; review them before sharing publicly.
 | `/cd damage` \| `healing` \| `damageTaken` \| `deaths` \| `interrupts` \| `cc` \| `ccBreaks` \| `dispels` \| `buffs` \| `debuffsCast` \| `debuffsReceived` | switch mode |
 | `/cdthreatcal on` / `/cdthreatcal off` / `/cdthreatcal status` | calibration recording and direct server queries |
 
-Chat reports (Say / Party / Raid / Guild) go through the **Report** button in the
+Chat reports (Say / Party / Raid / Guild / Whisper) go through the **Report** button in the
 window, not a slash command. Window menus also select modes and history.
 
 Window settings persist. Current/overall combat data and fight history do not
@@ -196,7 +242,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.0.9 release notes](RELEASE_NOTES_1.0.9.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.1.0 release notes](RELEASE_NOTES_1.1.0.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

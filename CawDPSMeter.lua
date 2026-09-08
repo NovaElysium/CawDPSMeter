@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.0.9
+-- Caw DPS Meter v1.1.0
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.0.9"
+D.version = "1.1.0"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -426,8 +426,8 @@ local function skinCawHoverTooltip(tt)
         edgeSize=1,
         insets={left=1,right=1,top=1,bottom=1}
     })
-    tt:SetBackdropColor(0.035,0.035,0.045,0.97)
-    tt:SetBackdropBorderColor(0.22,0.22,0.26,1)
+    tt:SetBackdropColor(0.10,0.105,0.12,0.98)
+    tt:SetBackdropBorderColor(0.23,0.24,0.27,1)
 end
 
 local playerTooltip=nil
@@ -470,6 +470,7 @@ local function initializeSavedVariables()
 
     if DB.locked == nil then DB.locked = false end
     D.locked = DB.locked and true or false
+    if D.uiCopySettings then D.appearance=D.uiCopySettings(DB.appearance) end
 
     -- Restore the last selected meter mode. Keep validation explicit so a
     -- stale/invalid SavedVariable can never break the mode selector.
@@ -878,6 +879,7 @@ end
 local function addDamage(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
     amount=tonumber(amount); if not amount or amount<=0 then return false end
     if not ensureStarted() then return false end
+    if sourceEvent~="DPSLog" then D.dpsLogRawCommitted=true end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.damage=a.damage+amount; a.hits=a.hits+1; if crit then a.crits=a.crits+1 end
     addSpell(a,spell,amount,crit); if D.threatOnDamage then D.threatOnDamage(a,amount,spell,crit,D.threatEventTarget) end; D.parsedTotal=D.parsedTotal+1
@@ -894,6 +896,7 @@ end
 local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
     amount=tonumber(amount); if not amount or amount<=0 then return false end
     if not ensureStarted() then return false end
+    if sourceEvent~="DPSLog" then D.dpsLogRawCommitted=true end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.healing=a.healing+amount; a.heals=a.heals+1; if crit then a.healCrits=a.healCrits+1 end
     addHealSpell(a,spell,amount,crit); if D.threatOnHealing then D.threatOnHealing(a,amount,spell) end; D.parsedTotal=D.parsedTotal+1
@@ -1358,6 +1361,10 @@ local function applySyncMessage(sender,msg,channel)
     if not syncRosterSender(sender) then return end
     local p=splitSync(msg)
     local kind=p[1]
+    if kind=="V" then
+        if D.talentViewReceive then D.talentViewReceive(sender,p,channel) end
+        return
+    end
     if kind=="K" then
         if D.talentSyncReceive then D.talentSyncReceive(sender,p,channel) end
         return
@@ -1867,12 +1874,19 @@ D.tryClaimSelfTotemSource = function(source,spell,ev)
     local p=D.pendingSelfTotem
     if not p or not p.time or (GetTime()-p.time)>12 then return nil end
 
+    -- The last cast is only an ownership hint, never the source's identity.
+    -- Different elemental totems may be active at the same time.
+    local names={['Searing Bolt']='Searing Totem',['Fire Nova']='Fire Nova Totem',
+        ['Magma Totem']='Magma Totem',['Magma Totem Effect']='Magma Totem'}
+    local totemName=names[spell]
+    if not totemName then return nil end
+
     local owner=D.guidToActor[safeUnitGUID("player") or D.selfKey]
     if not owner then return nil end
 
     local info={
         key=source,
-        name=p.name or "Totem",
+        name=totemName,
         guid=source,
         ownerKey=owner.key,
         isPet=true,
@@ -1882,7 +1896,7 @@ D.tryClaimSelfTotemSource = function(source,spell,ev)
     D.guidToActor[source]=info
     D.summonActors[source]=info
     D.petOwner[source]=owner.key
-    D.pendingSelfTotem=nil
+    -- Keep the short-lived ownership hint for other simultaneous totem GUIDs.
     return info
 end
 
@@ -2059,6 +2073,7 @@ local function tryRecordInterrupt(sourceInfo,ability,target)
 end
 
 local function parseSelf(ev,text)
+    if D.dpsLogActive then return false end
     local crit=isCritText(text); local _,_,amount; local spell
 
     if ev=="CHAT_MSG_SPELL_SELF_BUFF" then
@@ -2085,6 +2100,8 @@ local function parseSelf(ev,text)
         if amount then noteEnemyTarget(target,amount); local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then rememberAuraCast(si,spell,target); local a=utilityActor(si); startAura(a.debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=a.key end; return addDamage(D.selfKey,UnitName("player") or "You",safeUnitGUID("player"),nil,false,amount,spell or "DoT",false,ev) end
     elseif ev=="CHAT_MSG_COMBAT_PET_HITS" or ev=="CHAT_MSG_SPELL_PET_DAMAGE" then
         local pg=safeUnitGUID("pet"); local pi=D.guidToActor[pg or "pet"]; if not pi then return false end
+        local _,_,explicitSource=string.find(text,"^(0x[%x]+)")
+        if explicitSource and explicitSource~=pg then return false end
         local livePetName=safeUnitName("pet"); if livePetName and (not pi.name or pi.name=="Unknown" or pi.name=="UNKNOWN") then pi.name=livePetName end
         local target
         _,_,target,amount=string.find(text," (0x[%x]+) for ([0-9]+)")
@@ -2099,6 +2116,7 @@ local function parseSelf(ev,text)
     return false
 end
 local function parseGeneric(ev,text)
+    if D.dpsLogActive then return false end
     local crit=isCritText(text); local _,_,source,spell,amount
     local meleeTarget
     _,_,source,meleeTarget,amount=string.find(text,"^(0x[%x]+) hits (0x[%x]+) for ([0-9]+)")
@@ -2126,6 +2144,7 @@ end
 
 
 local function parseHealing(ev,text)
+    if D.dpsLogActive then return false end
     local crit=isCritText(text); local _,_,source,spell,target,amount
 
     -- Self direct heals. Check the critical form first: the generic
@@ -2620,6 +2639,7 @@ end
 
 local function parseRaw(rawEvent,text)
     if not text then return end
+    if D.dpsLogRawGate and D.dpsLogRawGate(rawEvent,text) then return end
     local ev=rawEvent or ""
 
     -- Conservative dispatch: only specialize event families whose purpose is
@@ -2672,6 +2692,37 @@ local function parseRaw(rawEvent,text)
     if parseGeneric(ev,text) then return end
     if parseHealing(ev,text) then return end
     if not parseUtility(ev,text) then captureUnknown(ev,text) end
+end
+
+-- Narrow structured-input bridge; utility/death/RAW threat confirmation remain
+-- on their existing paths. Only damage and healing have one exclusive producer.
+D.parseRawReplay=parseRaw
+D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit)
+    if D.localPlayerDead and not D.inCombat then return false end
+    if not info or not ensureStarted() then return false end
+    D.threatEventTarget=nil
+    if kind=="damage" then
+        if target then
+            if targetName then D.currentEnemyNames[target]=targetName end
+            noteEnemyTarget(target,amount)
+            rememberAuraCast(info,spell,target)
+            local hit={source=info,target=target,ability=spell,amount=amount,time=GetTime()}
+            D.lastCCDamage=hit; D.ccDamageByTarget[target]=hit
+            local active=D.activeCC[target]
+            if active then
+                active.breakSource=info; active.breakAbility=spell
+                active.breakAmount=amount; active.breakTime=hit.time
+            end
+        end
+        return addDamage(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog")
+    end
+    local ti=target and D.guidToActor[target]
+    if ti then
+        local ta=utilityActor(ti)
+        D.backfillAuraSource(ta and ta.buffs,spell,info.name,info.guid or info.key)
+        D.addAuraSourceHealing(ta and ta.buffs,spell,info.name,info.guid or info.key,amount)
+    end
+    return addHealing(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog")
 end
 
 local function deepCopyTable(src)
@@ -2862,7 +2913,7 @@ local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",threat="Threat"
 
 -- UI -----------------------------------------------------------------------
 local frame=CreateFrame("Frame","CawDPSMeterWindow",UIParent); D.window=frame
-frame:SetWidth(440); frame:SetHeight(260); frame:EnableMouse(true)
+frame:SetWidth(360); frame:SetHeight(178); frame:EnableMouse(true)
 -- Do not call SetClampedToScreen on this custom 1.12 client.
 -- Native frame-clamping has caused ACCESS_VIOLATION crashes while dragging on some builds;
 -- Caw clamps manually after the drag instead.
@@ -2903,10 +2954,11 @@ local function resetWindowPosition()
     frame:ClearAllPoints()
     frame:SetPoint("CENTER",UIParent,"CENTER",260,0)
     if frame:GetWidth()<160 or frame:GetWidth()>900 then frame:SetWidth(440) end
-    if frame:GetHeight()<110 or frame:GetHeight()>700 then frame:SetHeight(260) end
+    if frame:GetHeight()<70 or frame:GetHeight()>900 then frame:SetHeight(260) end
 end
 
 local function ensureWindowOnScreen()
+    if D.uiClamp then return D.uiClamp(frame) end
     -- Manual clamp using the ACTUAL rendered edges of UIParent and the meter.
     -- Do NOT use SetClampedToScreen on this custom 1.12 client: native clamping
     -- has caused ACCESS_VIOLATION crashes while dragging.
@@ -2963,14 +3015,14 @@ local function restoreWindowState()
     if layoutIsValid(DB) then src=DB elseif layoutIsValid(CharDB) then src=CharDB end
     if src then
         if src.width and src.width>=160 and src.width<=900 then frame:SetWidth(src.width) end
-        if src.height and src.height>=110 and src.height<=700 then frame:SetHeight(src.height) end
+        if src.height and src.height>=70 and src.height<=900 then frame:SetHeight(src.height) end
         frame:ClearAllPoints()
         -- Layout v4 stores only a CENTER offset.  This avoids restoring absolute
         -- GetLeft/GetTop coordinates across UI-scale/resolution changes, which
         -- could make the custom 1.12 client decide the frame was off-screen and
         -- snap it back to Caw's default position.
         if src.layoutVersion and src.layoutVersion>=4 and src.centerX ~= nil and src.centerY ~= nil then
-            frame:SetPoint("CENTER",UIParent,"CENTER",src.centerX,src.centerY)
+            if D.uiAnchorCenter then D.uiAnchorCenter(frame,src.centerX,src.centerY) else frame:SetPoint("CENTER",UIParent,"CENTER",src.centerX,src.centerY) end
         elseif src.point and src.x ~= nil and src.y ~= nil then
             frame:SetPoint(src.point,UIParent,src.relativePoint or src.point,src.x,src.y)
         elseif src.left ~= nil and src.top ~= nil then
@@ -2982,14 +3034,14 @@ local function restoreWindowState()
         copyLayout(src,DB); copyLayout(src,CharDB)
     else
         frame:ClearAllPoints(); frame:SetPoint("CENTER",UIParent,"CENTER",260,0)
-        frame:SetWidth(440); frame:SetHeight(260)
+        frame:SetWidth(360); frame:SetHeight(178)
     end
     ensureWindowOnScreen()
     D.layoutRestored=true
 end
 
-if frame.SetMinResize then pcall(frame.SetMinResize,frame,160,110) end
-if frame.SetMaxResize then pcall(frame.SetMaxResize,frame,900,700) end
+if frame.SetMinResize then pcall(frame.SetMinResize,frame,160,70) end
+if frame.SetMaxResize then pcall(frame.SetMaxResize,frame,900,900) end
 
 local function writeWindowState(dst)
     if not dst then return end
@@ -3012,6 +3064,7 @@ local function writeWindowState(dst)
         dst.centerX=cx-ux
         dst.centerY=cy-uy
     end
+    if D.uiCenterOffset then dst.centerX,dst.centerY=D.uiCenterOffset(frame) end
     dst.locked=D.locked and true or false
     if frame.cawDockFree then dst.centerX=frame.cawDockFree.x; dst.centerY=frame.cawDockFree.y end
     dst.mode=D.mode
@@ -3042,15 +3095,12 @@ end)
 
 -- Clean pfUI/ElvUI-inspired shell: square corners, very dark panels and
 -- restrained one-pixel separators instead of Blizzard's ornate borders.
-local FLAT_TEX="Interface\\Tooltips\\UI-Tooltip-Background"
+local FLAT_TEX="Interface\\Buttons\\WHITE8X8"
 local function flatPanel(f,r,g,b,a,border)
-    f:SetBackdrop({bgFile=FLAT_TEX,tile=true,tileSize=16,insets={left=0,right=0,top=0,bottom=0}})
+    f:SetBackdrop({bgFile=FLAT_TEX,edgeFile=FLAT_TEX,edgeSize=1,insets={left=1,right=1,top=1,bottom=1}})
     f:SetBackdropColor(r or 0.035,g or 0.035,b or 0.035,a or 0.96)
     local br=border or 0.20
-    local t=f:CreateTexture(nil,"BORDER"); t:SetTexture(FLAT_TEX); t:SetVertexColor(br,br,br,1); t:SetPoint("TOPLEFT",f,"TOPLEFT",0,0); t:SetPoint("TOPRIGHT",f,"TOPRIGHT",0,0); t:SetHeight(1)
-    local btm=f:CreateTexture(nil,"BORDER"); btm:SetTexture(FLAT_TEX); btm:SetVertexColor(br,br,br,1); btm:SetPoint("BOTTOMLEFT",f,"BOTTOMLEFT",0,0); btm:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",0,0); btm:SetHeight(1)
-    local l=f:CreateTexture(nil,"BORDER"); l:SetTexture(FLAT_TEX); l:SetVertexColor(br,br,br,1); l:SetPoint("TOPLEFT",f,"TOPLEFT",0,0); l:SetPoint("BOTTOMLEFT",f,"BOTTOMLEFT",0,0); l:SetWidth(1)
-    local rr=f:CreateTexture(nil,"BORDER"); rr:SetTexture(FLAT_TEX); rr:SetVertexColor(br,br,br,1); rr:SetPoint("TOPRIGHT",f,"TOPRIGHT",0,0); rr:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",0,0); rr:SetWidth(1)
+    f:SetBackdropBorderColor(br,br,br,1)
 end
 flatPanel(frame,0.025,0.025,0.025,0.98,0.18)
 
@@ -3108,6 +3158,7 @@ local function shortFightName(name)
 end
 
 local function selectedSegmentLabel()
+    if D.mode=="threat" and D.segment=="current" and D.serverThreatTargetName then return shortFightName(D.serverThreatTargetName()) end
     if D.segment=="overall" then return "Overall" end
     if D.segment=="history" then
         local h=D.fightHistory[D.segmentIndex or 1]
@@ -3184,6 +3235,7 @@ local segUpText=segUp:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); 
 local segDown=CreateFrame("Button",nil,segmentMenu)
 segDown:SetWidth(22); segDown:SetHeight(18); segDown:SetPoint("BOTTOMRIGHT",segmentMenu,"BOTTOMRIGHT",-4,4)
 local segDownText=segDown:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); segDownText:SetPoint("CENTER",segDown,"CENTER",0,0); segDownText:SetText("v")
+segmentMenu.buttons=segmentMenuButtons; segmentMenu.up=segUp; segmentMenu.down=segDown
 
 refreshSegmentMenu=function()
     buildSegmentItems()
@@ -3214,6 +3266,7 @@ refreshSegmentMenu=function()
     end
     if segmentMenuOffset>0 then segUp:Enable(); segUpText:SetTextColor(1,1,1) else segUp:Disable(); segUpText:SetTextColor(0.4,0.4,0.4) end
     if segmentMenuOffset+SEGMENT_MENU_VISIBLE<segmentItemCount then segDown:Enable(); segDownText:SetTextColor(1,1,1) else segDown:Disable(); segDownText:SetTextColor(0.4,0.4,0.4) end
+    if D.layoutSegmentMenu and D.mainView then D.layoutSegmentMenu(D.mainView) end
 end
 
 local si=1
@@ -3334,6 +3387,7 @@ local function refreshModeMenu()
         end
         i=i+1
     end
+    if D.uiStyleMeterMenu and D.mainView then D.uiStyleMeterMenu(D.mainView,modeMenu,"mode") end
 end
 
 local function scrollModeMenu(delta)
@@ -3409,7 +3463,7 @@ flatPanel(resetButton,0.065,0.065,0.065,1,0.25)
 resetButton:SetBackdropColor(0.08,0.08,0.08,1)
 local resetText=resetButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); resetText:SetPoint("CENTER",resetButton,"CENTER",0,0); resetText:SetText("")
 resetButton.icon=resetButton:CreateTexture(nil,"ARTWORK"); resetButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawReset.tga"); resetButton.icon:SetWidth(12); resetButton.icon:SetHeight(12); resetButton.icon:SetPoint("CENTER",resetButton,"CENTER",0,0)
-resetButton:SetScript("OnClick",function() resetFight(); D.inCombat=false; D.scrollOffset=0; if updateUI then updateUI() end end)
+resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset("current") end end)
 resetButton:SetScript("OnEnter",function()
     this:SetBackdropColor(0.15,0.15,0.15,1)
     local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Reset meter data",1,1,1); tt:Show() end
@@ -3483,7 +3537,7 @@ function D.buildReportUI()
 
     D.reportMenu=CreateFrame("Frame",nil,frame)
     D.reportMenu:SetWidth(96)
-    D.reportMenu:SetHeight(86)
+    D.reportMenu:SetHeight(106)
     D.reportMenu:SetPoint("TOPRIGHT",D.reportButton,"BOTTOMRIGHT",0,-2)
     flatPanel(D.reportMenu,0.025,0.025,0.025,0.99,0.25)
     D.reportMenu:SetBackdropColor(0.025,0.025,0.025,0.99)
@@ -3494,7 +3548,8 @@ function D.buildReportUI()
         {label="Say",channel="SAY"},
         {label="Party",channel="PARTY"},
         {label="Raid",channel="RAID"},
-        {label="Guild",channel="GUILD"}
+        {label="Guild",channel="GUILD"},
+        {label="Whisper...",channel="WHISPER"}
     }
     local i=1
     while i<=table.getn(channels) do
@@ -3511,10 +3566,11 @@ function D.buildReportUI()
         fs:SetPoint("LEFT",b,"LEFT",7,0)
         fs:SetText(info.label)
         b.channel=info.channel
-        b.hi=hi
+        b.hi=hi; b.text=fs
+        D.reportMenu.buttons=D.reportMenu.buttons or {}; D.reportMenu.buttons[i]=b
         b:SetScript("OnClick",function()
             D.reportMenu:Hide()
-            D.sendReport(this.channel)
+            if this.channel=="WHISPER" then D.openWhisperReport(nil) else D.sendReport(this.channel) end
         end)
         b:SetScript("OnEnter",function()
             this.hi:SetVertexColor(0.24,0.24,0.24,0.85)
@@ -3548,9 +3604,11 @@ D.buildReportUI()
 
 -- Main and additional windows share the same compact single-row header.
 function D.applyCompactWindowLayout()
-    D.layoutMeterHeader({frame=frame,brand=brand,header=header,headerLine=headerLine,toolbar=toolbar,toolbarLine=toolbarLine,
-        summary=summary,modeButton=modeButton,modeMenu=modeMenu,modeText=modeText,modeArrow=modeArrow,segmentButton=segmentButton,segmentText=segmentText,segmentArrow=segmentArrow,
-        closeButton=closeButton,resetButton=resetButton,lockButton=lockButton,reportButton=D.reportButton,addButton=D.multiAddButton})
+    D.mainView=D.mainView or {id=1,frame=frame,brand=brand,header=header,headerLine=headerLine,toolbar=toolbar,toolbarLine=toolbarLine,
+        summary=summary,modeButton=modeButton,modeMenu=modeMenu,modeText=modeText,modeArrow=modeArrow,segmentButton=segmentButton,segmentMenu=segmentMenu,segmentText=segmentText,segmentArrow=segmentArrow,
+        closeButton=closeButton,resetButton=resetButton,lockButton=lockButton,reportButton=D.reportButton,reportMenu=D.reportMenu,addButton=D.multiAddButton}
+    D.layoutMeterHeader(D.mainView)
+    if D.uiStyleView then D.uiStyleView(D.mainView) end
     D.reportText:SetText(""); resetText:SetText("")
     if D.reportIcon then D.reportIcon:Show() end
     if lockButton.icon then lockButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\"..(D.locked and "CawLock.tga" or "CawUnlock.tga")) end
@@ -3584,7 +3642,7 @@ function D.refreshSelectorLabels()
     local w=frame:GetWidth() or 440
     if w<360 then
         modeText:SetText(D.compactModeLabel())
-        if segmentText then segmentText:SetText(D.compactSegmentLabel()) end
+        if segmentText then segmentText:SetText(selectedSegmentLabel()) end
     else
         modeText:SetText(MODE_LABELS[D.mode] or D.mode)
         if segmentText then segmentText:SetText(selectedSegmentLabel()) end
@@ -3972,7 +4030,7 @@ while i<=MAX_ROWS do
     -- windows can render the exact same mouseover details for every mode.
     if not D.actorTooltipOnEnter and bar.GetScript then D.actorTooltipOnEnter=bar:GetScript("OnEnter") end
     bar:SetScript("OnMouseWheel",function() if D.scrollBy then if arg1 and arg1>0 then D.scrollBy(-1) else D.scrollBy(1) end end end)
-    local row={frame=rowFrame,bar=bar,classIcon=classIcon,rank=rank,left=left,right=right,actor=nil}; bar.detailsRow=row; D.rows[i]=row; i=i+1
+    local row={frame=rowFrame,bar=bar,background=bg,shade=shade,hover=hover,classIcon=classIcon,rank=rank,left=left,right=right,actor=nil}; bar.detailsRow=row; D.rows[i]=row; i=i+1
 end
 
 local function shortNumber(n)
@@ -4067,54 +4125,68 @@ function D.safeReportText(line)
     return line
 end
 
-function D.sendReport(channel)
-    if not channel or not SendChatMessage then
-        chat("Chat reporting is unavailable on this client.")
-        return
+function D.reportRecipient(name)
+    if type(name)~="string" then return nil end
+    name=string.gsub(name,"^%s*(.-)%s*$","%1")
+    if string.len(name)<2 or string.len(name)>64 or not string.find(name,"^[%a\128-\255][%a\128-\255%-]*$") then return nil end
+    return name
+end
+local function reportFailure(message)
+    chat(message); return false,message
+end
+function D.buildReportLines(v)
+    if v and v.closed then return nil,"This window has been closed." end
+    local list,count,dur,mode,segment
+    if v then
+        list,count=D.multiViewSortedActors(v); dur=D.multiViewDuration(v)
+        mode=v.mode; segment=D.multiReportSegmentName(v)
+    else
+        list,count=sortedActors(); dur=getDuration(); mode=D.mode; segment=D.reportSegmentName()
     end
-
+    if count<=0 then return nil,"Nothing to report for the selected mode/segment." end
+    local header="Caw DPS Meter: "..(MODE_LABELS[mode] or tostring(mode)).." - "..segment
+    if dur>0 then header=header.." - "..string.format("%.1fs",dur) end
+    local lines={D.safeReportText(header)}
+    for i=1,math.min(5,count) do
+        local line=v and D.multiReportLine(v,list[i],i,dur) or D.reportLineForActor(list[i],i,dur)
+        table.insert(lines,D.safeReportText(line))
+    end
+    table.insert(lines,D.safeReportText(v and D.multiReportTotalLine(v,list,count,dur) or D.reportTotalLine(list,count,dur)))
+    return lines
+end
+function D.sendReportLines(lines,channel,recipient)
+    if not channel or not SendChatMessage then return reportFailure("Chat reporting is unavailable on this client.") end
+    if channel=="WHISPER" then
+        recipient=D.reportRecipient(recipient)
+        if not recipient then return reportFailure("Enter a character name.") end
+    else recipient=nil end
+    if not lines or table.getn(lines)==0 then return reportFailure("Nothing to report for the selected mode/segment.") end
     if channel=="PARTY" then
         local inParty=GetNumPartyMembers and GetNumPartyMembers()>0
         local inRaid=GetNumRaidMembers and GetNumRaidMembers()>0
-        if not inParty and not inRaid then chat("You are not in a party."); return end
+        if not inParty and not inRaid then return reportFailure("You are not in a party.") end
     end
     if channel=="RAID" and ((not GetNumRaidMembers) or GetNumRaidMembers()<=0) then
-        chat("You are not in a raid.")
-        return
+        return reportFailure("You are not in a raid.")
     end
     if channel=="GUILD" and IsInGuild and not IsInGuild() then
-        chat("You are not in a guild.")
-        return
+        return reportFailure("You are not in a guild.")
     end
-
-    local list,count=sortedActors()
-    if count<=0 then
-        chat("Nothing to report for the selected mode/segment.")
-        return
+    for _,line in ipairs(lines) do
+        local ok,err=pcall(SendChatMessage,D.safeReportText(line),channel,nil,recipient)
+        if not ok then return reportFailure("Report failed: "..tostring(err)) end
     end
-
-    local dur=getDuration()
-    local label=MODE_LABELS[D.mode] or tostring(D.mode)
-    local header="Caw DPS Meter: "..label.." - "..D.reportSegmentName()
-    if dur>0 then header=header.." - "..string.format("%.1fs",dur) end
-
-    local ok,err=pcall(SendChatMessage,D.safeReportText(header),channel)
-    if not ok then chat("Report failed: "..tostring(err)); return end
-
-    local limit=count
-    if limit>5 then limit=5 end
-    local i=1
-    while i<=limit do
-        local sent,sendErr=pcall(SendChatMessage,D.safeReportText(D.reportLineForActor(list[i],i,dur)),channel)
-        if not sent then chat("Report failed: "..tostring(sendErr)); return end
-        i=i+1
-    end
-    pcall(SendChatMessage,D.safeReportText(D.reportTotalLine(list,count,dur)),channel)
+    return true
+end
+function D.sendReport(channel,recipient)
+    local lines,err=D.buildReportLines(nil)
+    if not lines then return reportFailure(err) end
+    return D.sendReportLines(lines,channel,recipient)
 end
 
 local function visibleRowCount()
     local h=frame:GetHeight() or 280
-    local n=math.floor((h-(LIST_TOP+22))/ROW_STEP)
+    local n=D.uiVisibleRows and D.uiVisibleRows(nil,frame) or math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if n<1 then n=1 end; if n>MAX_ROWS then n=MAX_ROWS end
     return n
 end
@@ -4133,6 +4205,7 @@ local upText=scrollUp:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); 
 local scrollDown=CreateFrame("Button",nil,frame); scrollDown:SetWidth(12); scrollDown:SetHeight(12); scrollDown:SetPoint("TOP",scrollTrack,"BOTTOM",0,-2)
 flatPanel(scrollDown,0.06,0.06,0.06,1,0.22)
 local downText=scrollDown:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); downText:SetPoint("CENTER",scrollDown,"CENTER",0,0); downText:SetText("v")
+D.mainScroll={scrollTrack=scrollTrack,scrollBackground=trackTex,scrollThumb=scrollThumb,scrollUp=scrollUp,scrollDown=scrollDown}
 
 local function clampScroll(total)
     local maxOffset=total-visibleRowCount(); if maxOffset<0 then maxOffset=0 end
@@ -4152,6 +4225,7 @@ scrollUp:SetScript("OnClick",function() scrollBy(-1) end)
 scrollDown:SetScript("OnClick",function() scrollBy(1) end)
 
 local wheelArea=CreateFrame("Frame",nil,frame); wheelArea:SetPoint("TOPLEFT",frame,"TOPLEFT",4,-LIST_TOP); wheelArea:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-16,4); wheelArea:EnableMouse(true)
+D.mainWheelArea=wheelArea
 if wheelArea.EnableMouseWheel then wheelArea:EnableMouseWheel(true) end
 wheelArea:SetScript("OnMouseWheel",function() if arg1 and arg1>0 then scrollBy(-1) else scrollBy(1) end end)
 if frame.EnableMouseWheel then frame:EnableMouseWheel(true) end
@@ -4174,6 +4248,30 @@ end
 -- Keep actor names from colliding with the numeric value at narrow widths.
 -- The right-hand value always wins; names are shortened with an ellipsis and
 -- the full actor name remains available in the existing hover tooltip.
+function D.petIconForActor(a)
+    local owner=a.ownerKey and ((D.guidToActor and D.guidToActor[a.ownerKey]) or (D.actors and D.actors[a.ownerKey]))
+    local ownerClass=a.petOwnerClass or (owner and owner.classToken)
+    if ownerClass=="WARLOCK" then return "Interface\\Icons\\Spell_Shadow_SummonFelHunter" end
+    return "Interface\\Icons\\Ability_Hunter_BeastTaming"
+end
+
+function D.setBarActorIcon(row)
+    local a=row.actor
+    if not row.classIcon then return end
+    if a and a.isPet then
+        row.classIcon:SetTexture(D.petIconForActor(a))
+        row.classIcon:SetTexCoord(0,1,0,1)
+        row.lastClassToken="PET"
+    else
+        local tc=a and a.classToken and CLASS_ICON_TCOORDS[a.classToken]
+        row.lastClassToken=a and a.classToken
+        if tc then
+            row.classIcon:SetTexture(CLASS_ICON_TEXTURE)
+            row.classIcon:SetTexCoord(tc[1],tc[2],tc[3],tc[4])
+        end
+    end
+end
+
 function D.fitBarActorName(row,fullName,startPad)
     if not row or not row.left or not row.right or not row.bar then return end
     fullName=tostring(fullName or "")
@@ -4182,12 +4280,23 @@ function D.fitBarActorName(row,fullName,startPad)
     if row.right.GetStringWidth then local ok,v=pcall(row.right.GetStringWidth,row.right); if ok and v then rw=v end end
     local avail=bw-(startPad or 58)-rw-10
     if row.classIcon and row.rank then
+        D.setBarActorIcon(row)
         local token=row.actor and row.actor.classToken
-        local showIcon=token and CLASS_ICON_TCOORDS[token] and avail>=48
+        local settings=D.uiSettings and D.uiSettings(row.view)
+        local showIcon=((row.actor and row.actor.isPet) or (token and CLASS_ICON_TCOORDS[token])) and avail>=48
+        if bw<220 and row.left.GetStringWidth and row.left:GetStringWidth()>avail then showIcon=false end
+        if settings and not settings.icons then showIcon=false end
         row.rank:ClearAllPoints()
         row.rank:SetPoint("LEFT",row.bar,"LEFT",showIcon and 24 or 3,0)
         if showIcon then row.classIcon:Show()
         else row.classIcon:Hide(); avail=avail+21 end
+        if settings and not settings.ranks then
+            row.rank:SetWidth(0); row.rank:SetText(""); avail=avail+23
+        else
+            local rankWidth=23
+            if bw<220 and row.rank.GetStringWidth then rankWidth=math.min(23,row.rank:GetStringWidth()+4) end
+            row.rank:SetWidth(rankWidth); avail=avail+23-rankWidth
+        end
     end
     if avail<0 then avail=0 end
     row.left:SetWidth(avail)
@@ -4221,16 +4330,16 @@ updateUI=function()
     if D.refreshSelectorLabels then D.refreshSelectorLabels() end
     if D.mode=="damage" then
         local total=totalDamage(); local totalDPS=0; if dur>0 then totalDPS=total/dur end
-        summary:SetText("Total: "..shortNumber(total).." | "..string.format("%.1f",totalDPS).." DPS")
+        summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",totalDPS).." DPS")
     elseif D.mode=="healing" then
         local total=totalHealing(); local totalHPS=0; if dur>0 then totalHPS=total/dur end
-        summary:SetText("Total: "..shortNumber(total).." | "..string.format("%.1f",totalHPS).." HPS")
+        summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",totalHPS).." HPS")
     elseif D.mode=="threat" then
         local targetName=D.threatDisplayTargetName and D.threatDisplayTargetName() or "Current Target"
-        summary:SetText((D.segment=="current" and D.serverThreatLabel and D.serverThreatLabel().." | " or "")..tostring(targetName))
+        summary:SetText(D.segment=="current" and D.serverThreatLabel and D.serverThreatLabel() or tostring(targetName))
     elseif D.mode=="damageTaken" then
         local total=0; local ui=1; while ui<=count do total=total+(list[ui].damageTaken or 0); ui=ui+1 end
-        summary:SetText("Total: "..shortNumber(total))
+        summary:SetText("Total: "..comma(total))
     elseif D.mode=="deaths" then
         local total=0; local ui=1; while ui<=count do total=total+(list[ui].deaths or 0); ui=ui+1 end
         summary:SetText("Deaths: "..tostring(total))
@@ -4245,6 +4354,9 @@ updateUI=function()
             summary:SetText("Total: "..tostring(utilTotal))
         end
     end
+    if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(D.mainView) end
+    local displayTotal=0
+    for _,actor in ipairs(list) do displayTotal=displayTotal+(actor._cawDisplayValue or 0) end
     local rowsVisible=visibleRowCount(); clampScroll(count); updateScrollVisual(count)
     local r=1
     while r<=MAX_ROWS do
@@ -4254,18 +4366,6 @@ updateUI=function()
             row.actor=a; row.frame:Show(); local value
             value=a._cawDisplayValue or 0
             row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value); local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
-            local tc=a.classToken and CLASS_ICON_TCOORDS[a.classToken] or nil
-            if tc then
-                if row.lastClassToken~=a.classToken then
-                    row.classIcon:SetTexture(CLASS_ICON_TEXTURE)
-                    row.classIcon:SetTexCoord(tc[1],tc[2],tc[3],tc[4])
-                    row.lastClassToken=a.classToken
-                end
-                row.classIcon:Show()
-            else
-                row.lastClassToken=nil
-                row.classIcon:Hide()
-            end
             row.rank:SetText(tostring(absoluteIndex).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
             if D.mode=="damage" then local dps=0; if dur>0 then dps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",dps).." DPS")
             elseif D.mode=="healing" then local hps=0; if dur>0 then hps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",hps).." HPS")
@@ -4275,9 +4375,40 @@ updateUI=function()
             elseif D.mode=="buffs" then row.right:SetText(tostring(value).." buffs")
             elseif D.mode=="debuffsCast" or D.mode=="debuffsReceived" then row.right:SetText(tostring(value).." debuffs")
             else row.right:SetText(tostring(value)) end
+            if D.uiFormatRow then D.uiFormatRow(row,value,dur,displayTotal,D.mode) end
             D.fitBarActorName(row,a.name,58)
         else row.actor=nil; row.lastClassToken=nil; if row.classIcon then row.classIcon:Hide() end; row.frame:Hide() end
         r=r+1
+    end
+end
+
+D.uiClassColor=classColor
+D.uiNumber=shortNumber
+D.uiAuraDuration=auraEntryDuration
+D.uiDuration=currentFightDuration
+D.uiSaveMain=saveWindowState
+D.uiSelectMain=selectSegment
+D.uiRefreshMeters=function()
+    updateUI()
+    for _,v in pairs(D.multiWindows or {}) do D.updateMultiWindow(v) end
+end
+D.uiSetLock=function(v,locked)
+    if v then v.locked=locked; D.applyMultiWindowLock(v)
+    else D.locked=locked; applyWindowLock() end
+end
+D.uiResetData=function(kind)
+    if kind=="current" or kind=="all" then resetFight(); D.inCombat=false; D.scrollOffset=0 end
+    if kind=="overall" or kind=="all" then D.overallSegment={actors={},duration=0,fights=0} end
+    if kind=="all" then
+        D.fightHistory={}; selectSegment("current",0)
+        for _,v in pairs(D.multiWindows or {}) do v.segment="current"; v.segmentIndex=0; v.scrollOffset=0 end
+    end
+    D.uiRefreshMeters()
+end
+D.uiCombatSelection=function()
+    if D.uiSettings and D.uiSettings().autoCurrent then selectSegment("current",0) end
+    for _,v in pairs(D.multiWindows or {}) do
+        if D.uiSettings and D.uiSettings(v).autoCurrent then v.segment="current"; v.segmentIndex=0; v.scrollOffset=0 end
     end
 end
 
@@ -4302,13 +4433,13 @@ function D.updateMultiAddButtons()
     end
     local canAdd=(count<D.multiWindowMax)
     if D.multiAddButton then
-        if canAdd then D.multiAddButton:Show() else D.multiAddButton:Hide() end
+        if canAdd and (frame:GetWidth() or 440)>=300 then D.multiAddButton:Show() else D.multiAddButton:Hide() end
     end
     i=2
     while i<=D.multiWindowMax do
         local v=D.multiWindows[i]
         if v and v.addButton then
-            if canAdd then v.addButton:Show() else v.addButton:Hide() end
+            if canAdd and (v.frame:GetWidth() or 440)>=300 then v.addButton:Show() else v.addButton:Hide() end
         end
         i=i+1
     end
@@ -4336,13 +4467,8 @@ function D.multiViewDuration(v)
 end
 
 function D.multiViewSegmentLabel(v)
-    local w=v.frame and v.frame:GetWidth() or 440
-    -- Match the primary window exactly: abbreviate only in ultra-compact mode.
-    if w<360 then
-        if v.segment=="overall" then return "All" end
-        if v.segment=="history" then return "#"..tostring(v.segmentIndex or 1) end
-        return "Cur"
-    end
+    -- The compact header reserves real space for the encounter name.
+    if v.mode=="threat" and v.segment=="current" and D.serverThreatTargetName then return shortFightName(D.serverThreatTargetName()) end
     if v.segment=="overall" then return "Overall" end
     if v.segment=="history" then
         local h=D.fightHistory[v.segmentIndex or 1]
@@ -4409,6 +4535,7 @@ function D.multiViewSortedActors(v)
 end
 
 function D.clampMultiWindow(f)
+    if D.uiClamp then return D.uiClamp(f) end
     if not f or not UIParent then return end
     local pl=UIParent:GetLeft(); local pr=UIParent:GetRight(); local pb=UIParent:GetBottom(); local pt=UIParent:GetTop()
     local l=f:GetLeft(); local r=f:GetRight(); local b=f:GetBottom(); local t=f:GetTop()
@@ -4437,11 +4564,13 @@ function D.saveMultiWindows()
         -- even if an old frame object still exists until the next reload.
         if v and not v.closed and v.frame and (v.frame:IsShown() or (v.frame.cawDockFree and v.frame.cawDockFree.hiddenByDock)) then
             local cx,cy=v.frame:GetCenter(); local ux,uy=UIParent:GetCenter()
+            if D.uiCenterOffset then local x,y=D.uiCenterOffset(v.frame); cx=ux+x; cy=uy+y end
             local seg=v.segment
             local segIndex=v.segmentIndex or 0
             if seg=="history" then seg="current"; segIndex=0 end
             if v.frame.cawDockFree then cx=ux+v.frame.cawDockFree.x; cy=uy+v.frame.cawDockFree.y end
             saved[out]={mode=v.mode,segment=seg,segmentIndex=segIndex,locked=v.locked and true or false,pfDock=v.pfDock and true or false,
+                appearance=D.uiCopySettings and D.uiCopySettings(v.appearance) or nil,
                 width=v.frame:GetWidth(),height=v.frame:GetHeight(),
                 centerX=(cx and ux) and (cx-ux) or 0,centerY=(cy and uy) and (cy-uy) or 0}
             out=out+1
@@ -4460,7 +4589,8 @@ function D.saveMultiWindows()
         while si<=table.getn(saved) do
             local src=saved[si]
             dst.extraWindows[si]={mode=src.mode,segment=src.segment,segmentIndex=src.segmentIndex,locked=src.locked,pfDock=src.pfDock,
-                width=src.width,height=src.height,centerX=src.centerX,centerY=src.centerY}
+                width=src.width,height=src.height,centerX=src.centerX,centerY=src.centerY,
+                appearance=D.uiCopySettings and D.uiCopySettings(src.appearance) or nil}
             si=si+1
         end
     end
@@ -4502,6 +4632,7 @@ function D.layoutMultiWindow(v)
     if not v or not v.frame then return end
     v.lastLayoutWidth=v.frame:GetWidth(); v.lastLayoutHeight=v.frame:GetHeight()
     D.layoutMeterHeader(v)
+    if D.uiStyleView then D.uiStyleView(v) end
     v.modeText:SetText(D.multiViewModeLabel(v)); v.segmentText:SetText(D.multiViewSegmentLabel(v))
     if v.lockIcon then v.lockIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\"..(v.locked and "CawLock.tga" or "CawUnlock.tga")) end
 end
@@ -4574,31 +4705,11 @@ function D.multiReportTotalLine(v,list,count,dur)
     return "Total: "..tostring(total)
 end
 
-function D.sendMultiReport(v,channel)
-    if not v or not channel or not SendChatMessage then chat("Chat reporting is unavailable on this client."); return end
-    if channel=="PARTY" then
-        local inParty=GetNumPartyMembers and GetNumPartyMembers()>0
-        local inRaid=GetNumRaidMembers and GetNumRaidMembers()>0
-        if not inParty and not inRaid then chat("You are not in a party."); return end
-    end
-    if channel=="RAID" and ((not GetNumRaidMembers) or GetNumRaidMembers()<=0) then chat("You are not in a raid."); return end
-    if channel=="GUILD" and IsInGuild and not IsInGuild() then chat("You are not in a guild."); return end
-    local list,count=D.multiViewSortedActors(v)
-    if count<=0 then chat("Nothing to report for this window's selected mode/segment."); return end
-    local dur=D.multiViewDuration(v)
-    local label=MODE_LABELS[v.mode] or tostring(v.mode)
-    local header="Caw DPS Meter: "..label.." - "..D.multiReportSegmentName(v)
-    if dur>0 then header=header.." - "..string.format("%.1fs",dur) end
-    local ok,err=pcall(SendChatMessage,D.safeReportText(header),channel)
-    if not ok then chat("Report failed: "..tostring(err)); return end
-    local limit=count; if limit>5 then limit=5 end
-    local i=1
-    while i<=limit do
-        local sent,sendErr=pcall(SendChatMessage,D.safeReportText(D.multiReportLine(v,list[i],i,dur)),channel)
-        if not sent then chat("Report failed: "..tostring(sendErr)); return end
-        i=i+1
-    end
-    pcall(SendChatMessage,D.safeReportText(D.multiReportTotalLine(v,list,count,dur)),channel)
+function D.sendMultiReport(v,channel,recipient)
+    if not v then return reportFailure("This window is unavailable.") end
+    local lines,err=D.buildReportLines(v)
+    if not lines then return reportFailure(err) end
+    return D.sendReportLines(lines,channel,recipient)
 end
 
 function D.scrollMultiWindow(v,delta)
@@ -4613,6 +4724,7 @@ function D.createMultiScroll(v)
     v.scrollTrack:SetPoint("TOPRIGHT",f,"TOPRIGHT",-3,-LIST_TOP)
     v.scrollTrack:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-3,28)
     local bg=v.scrollTrack:CreateTexture(nil,"BACKGROUND"); bg:SetAllPoints(v.scrollTrack)
+    v.scrollBackground=bg
     bg:SetTexture(FLAT_TEX); bg:SetVertexColor(0.10,0.10,0.10,0.95)
     v.scrollThumb=v.scrollTrack:CreateTexture(nil,"ARTWORK")
     v.scrollThumb:SetTexture(FLAT_TEX); v.scrollThumb:SetVertexColor(0.48,0.48,0.48,1)
@@ -4657,17 +4769,18 @@ function D.updateMultiWindow(v)
     local total=0; local ti=1
     while ti<=count do total=total+(list[ti].value or 0); ti=ti+1 end
     if v.summary then
-        if v.mode=="damage" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..shortNumber(total).." | "..string.format("%.1f",rate).." DPS")
-        elseif v.mode=="healing" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..shortNumber(total).." | "..string.format("%.1f",rate).." HPS")
-        elseif v.mode=="threat" then local tn=D.threatDisplayTargetName and D.threatDisplayTargetName() or "Current Target"; v.summary:SetText((v.segment=="current" and D.serverThreatLabel and D.serverThreatLabel().." | " or "")..tostring(tn))
-        elseif v.mode=="damageTaken" then v.summary:SetText("Total: "..shortNumber(total))
+        if v.mode=="damage" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",rate).." DPS")
+        elseif v.mode=="healing" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",rate).." HPS")
+        elseif v.mode=="threat" then local tn=D.threatDisplayTargetName and D.threatDisplayTargetName() or "Current Target"; v.summary:SetText(v.segment=="current" and D.serverThreatLabel and D.serverThreatLabel() or tostring(tn))
+        elseif v.mode=="damageTaken" then v.summary:SetText("Total: "..comma(total))
         elseif v.mode=="deaths" then v.summary:SetText("Deaths: "..tostring(total))
         elseif v.mode=="buffs" then v.summary:SetText(tostring(total).." buffs")
         elseif v.mode=="debuffsCast" or v.mode=="debuffsReceived" then v.summary:SetText(tostring(total).." debuffs")
         else v.summary:SetText("Total: "..tostring(total)) end
     end
+    if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(v) end
     local h=v.frame:GetHeight() or 260
-    local visible=math.floor((h-(LIST_TOP+22))/ROW_STEP)
+    local visible=D.uiVisibleRows and D.uiVisibleRows(v,v.frame) or math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if visible<1 then visible=1 end
     if visible>20 then visible=20 end
     local maxOffset=count-visible; if maxOffset<0 then maxOffset=0 end
@@ -4692,10 +4805,7 @@ function D.updateMultiWindow(v)
             elseif v.mode=="buffs" then row.right:SetText(tostring(value).." buffs")
             elseif v.mode=="debuffsCast" or v.mode=="debuffsReceived" then row.right:SetText(tostring(value).." debuffs")
             else row.right:SetText(tostring(value)) end
-            local tc=a.classToken and CLASS_ICON_TCOORDS[a.classToken] or nil
-            if tc then
-                row.classIcon:SetTexCoord(tc[1],tc[2],tc[3],tc[4]); row.classIcon:Show()
-            else row.classIcon:Hide() end
+            if D.uiFormatRow then D.uiFormatRow(row,value,dur,total,v.mode) end
             D.fitBarActorName(row,a.name,58)
         else
             row.actor=nil; row.classIcon:Hide(); row.frame:Hide()
@@ -4713,17 +4823,18 @@ function D.createMultiWindow(saved)
     local savedSegment=(saved and saved.segment) or "current"
     if savedSegment~="current" and savedSegment~="overall" then savedSegment="current" end
     local savedWidth=tonumber(saved and saved.width) or (frame:GetWidth() or 440)
-    local savedHeight=tonumber(saved and saved.height) or (frame:GetHeight() or 260)
+    local savedHeight=tonumber(saved and saved.height) or 178
     if savedWidth<160 then savedWidth=160 elseif savedWidth>900 then savedWidth=900 end
-    if savedHeight<110 then savedHeight=110 elseif savedHeight>700 then savedHeight=700 end
+    if savedHeight<70 then savedHeight=70 elseif savedHeight>900 then savedHeight=900 end
     local pooled=D.multiWindowPool[id]
     if pooled then
         D.multiWindowPool[id]=nil; D.multiWindows[id]=pooled
+        pooled.appearance=D.uiCopySettings and D.uiCopySettings(saved and saved.appearance) or nil
         pooled.closed=false; pooled.mode=savedMode; pooled.segment=savedSegment; pooled.segmentIndex=0
         pooled.scrollOffset=0; pooled.locked=(saved and saved.locked) and true or false
         pooled.pfDock=(saved and saved.pfDock) and true or false
         local pf=pooled.frame
-        pf:SetWidth(savedWidth); pf:SetHeight(savedHeight); pf:ClearAllPoints()
+        pf:SetScale(1); pf:SetWidth(savedWidth); pf:SetHeight(savedHeight); pf:ClearAllPoints()
         pf:SetPoint("CENTER",UIParent,"CENTER",tonumber(saved and saved.centerX) or (220+id*26),tonumber(saved and saved.centerY) or (-40-id*20))
         pf.nextUpdate=nil
         pf:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(pooled) end end)
@@ -4731,6 +4842,7 @@ function D.createMultiWindow(saved)
         return pooled
     end
     local v={id=id,mode=savedMode,segment=savedSegment,segmentIndex=0,locked=(saved and saved.locked) and true or false,scrollOffset=0,rows={}}
+    v.appearance=D.uiCopySettings and D.uiCopySettings(saved and saved.appearance) or nil
     v.pfDock=(saved and saved.pfDock) and true or false
     local f=CreateFrame("Frame",nil,UIParent); v.frame=f; D.multiWindows[id]=v
     -- A newly created view starts at the primary window's current dimensions.
@@ -4738,7 +4850,7 @@ function D.createMultiWindow(saved)
     -- the exact same compact/full-layout decision as the primary window.
     f:SetWidth(savedWidth); f:SetHeight(savedHeight); f:EnableMouse(true)
     if f.SetMovable then f:SetMovable(true) end; if f.SetResizable then f:SetResizable(true) end
-    if f.SetMinResize then pcall(f.SetMinResize,f,160,110) end; if f.SetMaxResize then pcall(f.SetMaxResize,f,900,700) end
+    if f.SetMinResize then pcall(f.SetMinResize,f,160,70) end; if f.SetMaxResize then pcall(f.SetMaxResize,f,900,900) end
     -- Same shell/chrome as the primary window.
     flatPanel(f,0.025,0.025,0.025,0.98,0.18)
     v.header=f:CreateTexture(nil,"ARTWORK"); v.header:SetTexture(FLAT_TEX); v.header:SetVertexColor(0.035,0.035,0.035,1); v.header:SetPoint("TOPLEFT",f,"TOPLEFT",1,-1); v.header:SetPoint("TOPRIGHT",f,"TOPRIGHT",-1,-1); v.header:SetHeight(26)
@@ -4774,7 +4886,7 @@ function D.createMultiWindow(saved)
 
     v.resetButton=CreateFrame("Button",nil,f); v.resetButton:SetWidth(17); v.resetButton:SetHeight(17); v.resetButton:SetPoint("RIGHT",v.closeButton,"LEFT",-3,0); flatPanel(v.resetButton,0.065,0.065,0.065,1,0.25); v.resetButton:SetBackdropColor(0.08,0.08,0.08,1)
     v.resetIcon=v.resetButton:CreateTexture(nil,"ARTWORK"); v.resetIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawReset.tga"); v.resetIcon:SetWidth(12); v.resetIcon:SetHeight(12); v.resetIcon:SetPoint("CENTER",v.resetButton,"CENTER",0,0)
-    v.resetButton:SetScript("OnClick",function() resetFight(); D.inCombat=false; D.scrollOffset=0; local wi=2; while wi<=D.multiWindowMax do if D.multiWindows[wi] then D.multiWindows[wi].scrollOffset=0; D.updateMultiWindow(D.multiWindows[wi]) end; wi=wi+1 end; if updateUI then updateUI() end end)
+    v.resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset("current") end end)
     v.resetButton:SetScript("OnEnter",function() this:SetBackdropColor(0.15,0.15,0.15,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Reset meter data",1,1,1); tt:Show() end end)
     v.resetButton:SetScript("OnLeave",function() this:SetBackdropColor(0.065,0.065,0.065,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
 
@@ -4787,13 +4899,13 @@ function D.createMultiWindow(saved)
     v.addButton:SetScript("OnClick",function() D.createMultiWindow(nil); D.saveMultiWindows() end)
     v.addButton:SetScript("OnEnter",function() this:SetBackdropColor(0.14,0.14,0.14,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Create another Caw window",1,1,1); tt:Show() end end)
     v.addButton:SetScript("OnLeave",function() this:SetBackdropColor(0.055,0.055,0.055,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
-    v.reportMenu=CreateFrame("Frame",nil,f); v.reportMenu:SetWidth(96); v.reportMenu:SetHeight(86); v.reportMenu:SetPoint("TOPRIGHT",v.reportButton,"BOTTOMRIGHT",0,-2); flatPanel(v.reportMenu,0.025,0.025,0.025,0.99,0.25); v.reportMenu.cawDropdown=true; v.reportMenu:SetFrameStrata("DIALOG"); v.reportMenu:SetFrameLevel(60); v.reportMenu:Hide()
-    local reportChannels={{label="Say",channel="SAY"},{label="Party",channel="PARTY"},{label="Raid",channel="RAID"},{label="Guild",channel="GUILD"}}
+    v.reportMenu=CreateFrame("Frame",nil,f); v.reportMenu:SetWidth(96); v.reportMenu:SetHeight(106); v.reportMenu:SetPoint("TOPRIGHT",v.reportButton,"BOTTOMRIGHT",0,-2); flatPanel(v.reportMenu,0.025,0.025,0.025,0.99,0.25); v.reportMenu.cawDropdown=true; v.reportMenu:SetFrameStrata("DIALOG"); v.reportMenu:SetFrameLevel(60); v.reportMenu:Hide()
+    local reportChannels={{label="Say",channel="SAY"},{label="Party",channel="PARTY"},{label="Raid",channel="RAID"},{label="Guild",channel="GUILD"},{label="Whisper...",channel="WHISPER"}}
     local rci=1
     while rci<=table.getn(reportChannels) do
         local info=reportChannels[rci]; local rb=CreateFrame("Button",nil,v.reportMenu); rb:SetWidth(88); rb:SetHeight(18); rb:SetPoint("TOPLEFT",v.reportMenu,"TOPLEFT",4,-4-((rci-1)*20))
-        local rfs=rb:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); rfs:SetPoint("LEFT",rb,"LEFT",7,0); rfs:SetText(info.label); rb.channel=info.channel
-        rb:SetScript("OnClick",function() v.reportMenu:Hide(); D.sendMultiReport(v,this.channel) end)
+        local rfs=rb:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); rfs:SetPoint("LEFT",rb,"LEFT",7,0); rfs:SetText(info.label); rb.channel=info.channel; rb.text=rfs
+        rb:SetScript("OnClick",function() v.reportMenu:Hide(); if this.channel=="WHISPER" then D.openWhisperReport(v) else D.sendMultiReport(v,this.channel) end end)
         v.reportMenu.buttons=v.reportMenu.buttons or {}; v.reportMenu.buttons[rci]=rb; rci=rci+1
     end
     v.reportButton:SetScript("OnClick",function() if v.reportMenu:IsShown() then v.reportMenu:Hide() else v.modeMenu:Hide(); if v.segmentMenu then v.segmentMenu:Hide() end; v.reportMenu:Show() end end)
@@ -4825,6 +4937,7 @@ function D.createMultiWindow(saved)
             elseif b then b:Hide() end
             bi=bi+1
         end
+        D.layoutSegmentMenu(v)
     end
     v.segmentButton:SetScript("OnClick",function() if v.segmentMenu:IsShown() then v.segmentMenu:Hide() else v.modeMenu:Hide(); if v.reportMenu then v.reportMenu:Hide() end; v.rebuildSegments(); v.segmentMenu:Show() end end)
 
@@ -4841,7 +4954,7 @@ function D.createMultiWindow(saved)
         local rank=bar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); rank:SetPoint("LEFT",bar,"LEFT",24,0); rank:SetWidth(23); rank:SetJustifyH("RIGHT")
         local left=bar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); left:SetPoint("LEFT",rank,"RIGHT",7,0); left:SetJustifyH("LEFT")
         local right=bar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); right:SetPoint("RIGHT",bar,"RIGHT",-6,0); right:SetJustifyH("RIGHT")
-        v.rows[ri]={frame=rf,bar=bar,classIcon=classIcon,rank=rank,left=left,right=right}
+        v.rows[ri]={frame=rf,bar=bar,background=bg,classIcon=classIcon,rank=rank,left=left,right=right}
         bar:EnableMouse(true)
         if bar.EnableMouseWheel then bar:EnableMouseWheel(true) end
         bar:SetScript("OnMouseWheel",function() D.scrollMultiWindow(v,arg1 and arg1>0 and -1 or 1) end)
@@ -5125,6 +5238,7 @@ end
 events:SetScript("OnUpdate",function()
     if D.threatPeerTick then D.threatPeerTick(sendSyncNow,syncChannel()) end
     if D.talentSyncTick then D.talentSyncTick(sendSyncNow,syncChannel()) end
+    if D.talentViewTick then D.talentViewTick(sendSyncNow,syncChannel()) end
     if D.threatSyncTick then D.threatSyncTick(sendSyncNow,syncChannel()) end
     if D.inCombat and not D.syncRequested and D.syncEnemySet and D.syncEnemySet()~="" then requestCombatSync() end
     if D.threatPrunePending and GetTime()>=(D.nextThreatPrune or 0) then D.nextThreatPrune=GetTime()+1; D.threatPrunePending() end
@@ -5265,7 +5379,7 @@ events:SetScript("OnEvent",function()
                 D.logLine("seg","REGEN_DISABLED: kept running segment (age "..string.format("%.2f",segAge).."s) = flicker within grace")
             end
         end
-        D.segment="current"; D.segmentIndex=0; D.scrollOffset=0
+        if D.uiCombatSelection then D.uiCombatSelection() end
         updateUI()
     elseif event=="PLAYER_REGEN_ENABLED" then
         D.logState("REGEN_ENABLED (leave combat)")
@@ -5392,7 +5506,7 @@ events:SetScript("OnEvent",function()
             applySyncMessage(arg4,arg2,arg3)
         end
     elseif event=="PLAYER_LOGOUT" then saveWindowState(); if D.saveMultiWindows then D.saveMultiWindows() end
-    elseif event=="PLAYER_ENTERING_WORLD" then restoreWindowState(); refreshRoster(); if applyWindowLock then applyWindowLock() end; updateUI(); if D.restoreMultiWindows then D.restoreMultiWindows() end
+    elseif event=="PLAYER_ENTERING_WORLD" then restoreWindowState(); refreshRoster(); if applyWindowLock then applyWindowLock() end; D.applyCompactWindowLayout(); updateUI(); if D.restoreMultiWindows then D.restoreMultiWindows() end
     elseif event=="PARTY_MEMBERS_CHANGED" or event=="RAID_ROSTER_UPDATE" or event=="UNIT_PET" then refreshRoster() end
 end)
 

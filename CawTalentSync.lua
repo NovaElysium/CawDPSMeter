@@ -24,6 +24,7 @@ function D.readTalentLayout()
 end
 
 function D.talentProfileFor(actor)
+    if not actor or not actor.guid then return nil end
     local p=actor and D.talentProfiles[actor.guid]
     if p and GetTime()-p.time<=90 and D.threatPeerUnit(actor.guid,p.name) then return p end
     if actor then D.talentProfiles[actor.guid]=nil end
