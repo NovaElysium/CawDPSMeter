@@ -3,6 +3,10 @@
 Released September 8, 2026. This update brings player details, talent trees and
 per-window settings, along with a revised interface for both large and minimal meters.
 
+**September 9 hotfix (still 1.1.0):** Damage and healing tooltip percentages now
+use the player's full total, including pets and totems. Pet and totem contributions
+also show their percentage. Recorded totals were already correct.
+
 **1.1.0 download updated:** optional aggro warnings are now included. If you
 already installed 1.1.0, download it again and use `/reload` after replacing the files.
 Under **Settings > Threat**, enable Screen glow, Warning sound, or both. Defaults
@@ -97,7 +101,7 @@ The maintainer's private group/talent-status overlay is excluded.
 The interface uses the combat data available on Vanilla. Charts,
 target-by-target damage data and player comparison panels remain future work.
 
-Validation: 279 combat/data regressions, 143 UI checks, 38 alert checks and ten two-client
+Validation: 279 combat/data regressions, 161 UI checks, 38 alert checks and ten two-client
 talent/threat sync scenarios pass against the public package. Checks include
 every mode and encounter selection in main and additional windows, compact
 menus, window reuse, reports, settings and pfUI layering. The ZIP is checked

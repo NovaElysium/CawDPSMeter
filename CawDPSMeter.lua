@@ -3799,20 +3799,29 @@ while i<=MAX_ROWS do
         tt:ClearLines()
         tt:SetText(a.name,cr,cg,cb)
         local dur=getDuration()
+        -- Every contribution uses the displayed owner total, including summons.
+        -- Spell coverage can be incomplete, so never normalize to recorded spells.
+        local contributionTotal=0
+        if D.mode=="damage" then contributionTotal=actorDisplayDamage(a)
+        elseif D.mode=="healing" then contributionTotal=actorDisplayHealing(a) end
+        local function contributionText(value)
+            local pct=0
+            if contributionTotal>0 then pct=value/contributionTotal*100 end
+            return comma(value).."  "..string.format("%.1f%%",pct)
+        end
 
         if D.mode=="damage" then
-            local dmg=actorDisplayDamage(a); local dps=0
+            local dmg=contributionTotal; local dps=0
             if dur>0 then dps=dmg/dur end
             tt:AddDoubleLine("Damage",comma(dmg).."  |  "..string.format("%.1f DPS",dps),0.78,0.78,0.78,1,1,1)
 
             local spells,sn=sortedSpells(a); local x=1
             if sn>0 then tt:AddLine(" "); tt:AddLine("Damage abilities",1,0.82,0) end
             while x<=sn and x<=8 do
-                local sp=spells[x]; local pct=0
-                if (a.damage or 0)>0 then pct=(sp.damage/a.damage)*100 end
+                local sp=spells[x]
                 local critPct=0
                 if (sp.hits or 0)>0 then critPct=((sp.crits or 0)/(sp.hits or 1))*100 end
-                tt:AddDoubleLine(sp.name,comma(sp.damage).."  "..string.format("%.1f%%",pct).."  |  "..string.format("%.0f%% crit",critPct),1,1,1,0.88,0.88,0.88)
+                tt:AddDoubleLine(sp.name,contributionText(sp.damage).."  |  "..string.format("%.0f%% crit",critPct),1,1,1,0.88,0.88,0.88)
                 x=x+1
             end
 
@@ -3870,18 +3879,17 @@ while i<=MAX_ROWS do
             end
 
         elseif D.mode=="healing" then
-            local heal=actorDisplayHealing(a); local hps=0
+            local heal=contributionTotal; local hps=0
             if dur>0 then hps=heal/dur end
             tt:AddDoubleLine("Healing",comma(heal).."  |  "..string.format("%.1f HPS",hps),0.55,0.90,0.55,0.75,1,0.75)
 
             local heals,hn=sortedHeals(a); local x=1
             if hn>0 then tt:AddLine(" "); tt:AddLine("Healing abilities",1,0.82,0) end
             while x<=hn and x<=8 do
-                local sp=heals[x]; local pct=0
-                if (a.healing or 0)>0 then pct=(sp.healing/a.healing)*100 end
+                local sp=heals[x]
                 local critPct=0
                 if (sp.hits or 0)>0 then critPct=((sp.crits or 0)/(sp.hits or 1))*100 end
-                tt:AddDoubleLine(sp.name,comma(sp.healing).."  "..string.format("%.1f%%",pct).."  |  "..string.format("%.0f%% crit",critPct),1,1,1,0.88,0.88,0.88)
+                tt:AddDoubleLine(sp.name,contributionText(sp.healing).."  |  "..string.format("%.0f%% crit",critPct),1,1,1,0.88,0.88,0.88)
                 x=x+1
             end
 
@@ -3996,27 +4004,27 @@ while i<=MAX_ROWS do
 
         if D.mode=="damage" then
             if petDmg>0 then
-                tt:AddLine(" "); tt:AddDoubleLine("Pet contribution",comma(petDmg),1,0.82,0,1,0.75,0.25)
+                tt:AddLine(" "); tt:AddDoubleLine("Pet contribution",contributionText(petDmg),1,0.82,0,1,0.75,0.25)
             end
             if totemDmg>0 then
-                tt:AddLine(" "); tt:AddDoubleLine("Totem contribution",comma(totemDmg),1,0.82,0,1,0.75,0.25)
+                tt:AddLine(" "); tt:AddDoubleLine("Totem contribution",contributionText(totemDmg),1,0.82,0,1,0.75,0.25)
                 local tn,tg
                 for tn,tg in totemGroups do
                     if (tg.damage or 0)>0 then
-                        tt:AddDoubleLine(tn,comma(tg.damage or 0),1,1,1,0.86,0.86,0.86)
+                        tt:AddDoubleLine(tn,contributionText(tg.damage or 0),1,1,1,0.86,0.86,0.86)
                     end
                 end
             end
         elseif D.mode=="healing" then
             if petHeal>0 then
-                tt:AddLine(" "); tt:AddDoubleLine("Pet contribution",comma(petHeal),1,0.82,0,0.7,1,0.7)
+                tt:AddLine(" "); tt:AddDoubleLine("Pet contribution",contributionText(petHeal),1,0.82,0,0.7,1,0.7)
             end
             if totemHeal>0 then
-                tt:AddLine(" "); tt:AddDoubleLine("Totem contribution",comma(totemHeal),1,0.82,0,0.7,1,0.7)
+                tt:AddLine(" "); tt:AddDoubleLine("Totem contribution",contributionText(totemHeal),1,0.82,0,0.7,1,0.7)
                 local tn,tg
                 for tn,tg in totemGroups do
                     if (tg.healing or 0)>0 then
-                        tt:AddDoubleLine(tn,comma(tg.healing or 0),1,1,1,0.86,0.86,0.86)
+                        tt:AddDoubleLine(tn,contributionText(tg.healing or 0),1,1,1,0.86,0.86,0.86)
                     end
                 end
             end

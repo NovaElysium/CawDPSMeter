@@ -49,6 +49,9 @@ and [Semantic Versioning](https://semver.org/).
   and talent sync remain active. The local maintainer overlay stays excluded.
 
 ### Fixed
+- Damage and healing tooltips now calculate ability percentages against the full
+  player total, including owned pets and totems. Pet and totem contributions also
+  show their share of that total in all windows and segments.
 - Footer totals and DPS/HPS shorten to k/M values when needed, while their tooltip
   retains full totals. Narrow windows keep text inside the available footer space.
 - Meter dropdowns close each other and clear when their window is hidden or Settings opens.
@@ -59,7 +62,7 @@ and [Semantic Versioning](https://semver.org/).
   be nil on the Vanilla client. Each bar keeps its own current row reference.
 
 ### Validation
-- 279 combat/data regressions, 143 UI checks, 38 alert checks and ten two-client sync scenarios pass
+- 279 combat/data regressions, 161 UI checks, 38 alert checks and ten two-client sync scenarios pass
   against the public package. ZIP contents and private-overlay exclusion are verified.
   UI tests use mocked client APIs; see RELEASE_NOTES_1.1.0.md for scope and limitations.
 

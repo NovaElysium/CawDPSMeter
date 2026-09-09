@@ -343,4 +343,86 @@ check(not D.mainView.segmentMenu.up:IsShown() and D.mainView.segmentMenu:GetHeig
 for i=2,10 do D.fightHistory[i]={name='Fight '..i,duration=10,actors={}} end
 D.mainView.segmentMenu:Hide(); click(D.mainView.segmentButton)
 check(D.mainView.segmentMenu.up:IsShown() and D.mainView.segmentMenu.down:IsShown() and D.mainView.segmentMenu.buttons[1]:GetWidth()==D.mainView.segmentMenu:GetWidth()-8,"overflowing encounter lists scroll above and below full-width entries")
+-- Hover percentages use the same full owner total as the meter and analysis.
+do
+    local tt=upvalue(D.actorTooltipOnEnter,'getPlayerTooltip')()
+    local oldClear,oldDouble=tt.ClearLines,tt.AddDoubleLine
+    local lines={}
+    tt.ClearLines=function() lines={} end
+    tt.AddDoubleLine=function(self,left,right) lines[left]=right end
+    local function sample(key,value,owner,totem,name,mode)
+        local healing=mode=='healing'
+        return {key=key,name=name or key,classToken='SHAMAN',isPet=owner~=nil,ownerKey=owner,isTotem=totem,
+            damage=healing and 0 or value,healing=healing and value or 0,
+            spells=healing and {} or {Strike={damage=value,hits=4,crits=1}},
+            healSpells=healing and {Heal={healing=value,hits=4,crits=1}} or {}}
+    end
+    local oldActors,oldOverall,oldHistory=D.actors,D.overallSegment,D.fightHistory
+    local oldMode,oldSegment,oldIndex=D.mode,D.segment,D.segmentIndex
+    local mainActor,extraActor=D.rows[1].actor,v.rows[1].actor
+    local extraMode,extraSegment,extraIndex=v.mode,v.segment,v.segmentIndex
+    local function hover(actors,mode,segment,view)
+        -- Deliberately different inactive segments catch cross-window leakage.
+        D.actors={}; D.overallSegment={actors={},duration=10}; D.fightHistory={{actors={},duration=10}}
+        if segment=='current' then D.actors=actors
+        elseif segment=='overall' then D.overallSegment.actors=actors
+        else D.fightHistory[1].actors=actors end
+        local row
+        if view then
+            D.mode='deaths'; D.segment='current'; D.segmentIndex=0
+            view.mode=mode; view.segment=segment; view.segmentIndex=1; row=view.rows[1]
+        else D.mode=mode; D.segment=segment; D.segmentIndex=1; row=D.rows[1] end
+        row.actor=actors.owner; this=row.bar; row.bar.scripts.OnEnter()
+        if view then assert(D.mode=='deaths' and D.segment=='current' and D.segmentIndex==0) end
+        return lines
+    end
+    local owner=sample('owner',3406)
+    owner.spells={['Tidal Wave']={damage=1350,hits=1},Melee={damage=1186,hits=4},
+        ['Flame Shock']={damage=404,hits=2},Stormstrike={damage=237,hits=1},
+        ['Earth Shock']={damage=165,hits=1},['Lightning Strike']={damage=64,hits=4,crits=1}}
+    local actors={owner=owner,magma=sample('magma',962,'owner',true,'Magma Totem'),
+        nova=sample('nova',831,'owner',true,'Fire Nova Totem')}
+    for _,segment in ipairs({'current','overall','history'}) do
+        for _,view in ipairs({false,v}) do
+            local text=hover(actors,'damage',segment,view)
+            check(string.find(text.Damage,'5,199',1,true) and text['Tidal Wave']=='1,350  26.0%  |  0% crit'
+                and text['Totem contribution']=='1,793  34.5%' and text['Magma Totem']=='962  18.5%'
+                and text['Fire Nova Totem']=='831  16.0%',
+                'screenshot totem shares use 5199 total in '..segment..' '..(view and 'extra' or 'main')..' hover')
+        end
+    end
+    for _,mode in ipairs({'damage','healing'}) do
+        local spell=mode=='damage' and 'Strike' or 'Heal'
+        local owner=sample('owner',100,nil,nil,nil,mode)
+        local actors={owner=owner,pet=sample('pet',25,'owner',false,'Pet',mode),
+            outsider=sample('outsider',500,nil,nil,nil,mode),otherPet=sample('otherPet',300,'outsider',false,nil,mode)}
+        local text=hover(actors,mode,'current')
+        check(text[spell]=='100  80.0%  |  25% crit' and text['Pet contribution']=='25  20.0%',
+            mode..' hover includes owned pets and excludes other players and pets')
+        actors.t1=sample('t1',40,'owner',true,'Totem',mode); actors.t2=sample('t2',35,'owner',true,'Totem',mode)
+        text=hover(actors,mode,'history',v)
+        check(text[spell]=='100  50.0%  |  25% crit' and text['Pet contribution']=='25  12.5%'
+            and text['Totem contribution']=='75  37.5%' and text.Totem=='75  37.5%',
+            mode..' combines player, pets and repeated totem summons without changing crit rate')
+        owner[mode]=200; text=hover(actors,mode,'overall')
+        check(text[spell]=='100  33.3%  |  25% crit' and text['Totem contribution']=='75  25.0%',
+            mode..' incomplete spells retain the full synced total as denominator')
+        actors={owner=sample('owner',0,nil,nil,nil,mode),pet=sample('pet',100,'owner',false,'Pet',mode)}
+        text=hover(actors,mode,'current')
+        check(text['Pet contribution']=='100  100.0%' and text[spell]=='0  0.0%  |  25% crit',
+            mode..' pet-only contribution reaches 100 percent with zero owner output')
+        actors={owner=sample('owner',100,nil,nil,nil,mode)}; text=hover(actors,mode,'current')
+        check(text[spell]=='100  100.0%  |  25% crit' and not text['Pet contribution'] and not text['Totem contribution'],
+            mode..' without summons retains full ability shares')
+        actors.owner[mode]=0
+        actors.owner[mode=='damage' and 'spells' or 'healSpells'][spell][mode]=0
+        text=hover(actors,mode,'current')
+        check(text[spell]=='0  0.0%  |  25% crit',mode..' zero total produces finite percentages')
+    end
+    tt.ClearLines=oldClear; tt.AddDoubleLine=oldDouble
+    D.actors=oldActors; D.overallSegment=oldOverall; D.fightHistory=oldHistory
+    D.mode=oldMode; D.segment=oldSegment; D.segmentIndex=oldIndex
+    D.rows[1].actor=mainActor; v.rows[1].actor=extraActor
+    v.mode=extraMode; v.segment=extraSegment; v.segmentIndex=extraIndex
+end
 print("UI checks: "..checks)
