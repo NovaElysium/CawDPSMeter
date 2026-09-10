@@ -31,9 +31,12 @@ via SuperWoW, so it tracks combat events the default combat log never exposes, a
 it can pull data from other players running the addon to fill in what your client
 did not see. Up to four independent windows share the same combat data.
 
-## Interface in 1.1.0
+## Interface in 1.1.1
 
 Left-click a player bar for an ability breakdown with player and segment selection.
+Use **Compare** in that view to compare two players of the same class, including
+their ability shares and the difference between both totals. The comparison
+temporarily replaces the detail window and restores it when closed.
 Use the sliders icon (or **... > Settings** in a narrow window), right-click a player bar, or type `/cawoptions` for
 window scale, size, bar spacing, text, transparency and pfUI docking options.
 Each window has its own appearance. New windows fit five bars; existing layouts
@@ -70,12 +73,12 @@ adjust the warning threshold (default 90%) and cooldown (default eight seconds),
 then use **Test warning** to preview it. Alerts read existing current-target
 server data and still work when the meter is hidden. They fire on a new warning
 state, rather than repeating continuously, and apply to your character across
-all windows. The updated 1.1.0 download includes these controls; existing 1.1.0
+all windows. The updated 1.1.1 download includes these controls; existing 1.1.1
 users can replace the files and `/reload`.
 
 The optional DPSLog backend needs a compatible DLL installed separately. Collection
 and talent sync continue independently of the visible UI. See
-[1.1.0 release notes](RELEASE_NOTES_1.1.0.md) for available statistics and validation.
+[1.1.1 release notes](RELEASE_NOTES_1.1.1.md) for available statistics and validation.
 
 ## Features
 
@@ -120,7 +123,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
    `<WoW>\Interface\AddOns\CawDPSMeter\`
    (the folder must be named `CawDPSMeter`, not `CawDPSMeter-main`).
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
-4. Restart the client after updating to 1.1.0 so the new UI and data modules load;
+4. Restart the client after updating to 1.1.1 so the new UI and data modules load;
    `/reload` alone is not enough on the first update. Type `/cd` to show the meter.
    Existing settings are kept.
 
@@ -130,7 +133,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
 
 ## Windows and pfUI
 
-Version 1.1.0 keeps selectors and buttons in a single compact header, gives encounter
+Version 1.1.1 keeps selectors and buttons in a single compact header, gives encounter
 names more space, and keeps totals and Threat status in a reserved footer.
 A persistent watermark sits behind the player bars without intercepting clicks.
 
@@ -250,7 +253,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.1.0 release notes](RELEASE_NOTES_1.1.0.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.1.1 release notes](RELEASE_NOTES_1.1.1.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

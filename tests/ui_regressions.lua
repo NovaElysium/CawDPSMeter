@@ -101,6 +101,60 @@ this=v.rows[1].bar; arg1='RightButton'; this.scripts.OnMouseUp()
 check(D.optionsPanel.view==v,"right-click on an extra bar opens settings for that window")
 this={}; arg1='LeftButton'; D.rows[1].bar.scripts.OnMouseUp(); D.rows[1].bar.scripts.OnEnter()
 check(true,"unbound hover and click events safely return")
+D.rows[1].bar.cawOriginalEnter=original
+this=D.rows[1].bar; this.scripts.OnEnter()
+check(D.actorHoverFrame and D.actorHoverFrame:IsShown() and D.actorHoverFrame.summary:GetText()=='Damage 125  |  12.5 DPS',"damage hover uses a compact total summary and visible bars")
+check(D.actorHoverFrame.rows[1].name:GetText()=='Shot' and D.actorHoverFrame.rows[2].name:GetText()=='Bite',"damage hover merges player and pet abilities into one sorted list")
+check(D.actorHoverFrame.rows[1].name.lastPoint[5]==-1 and D.actorHoverFrame.rows[1].value.lastPoint[5]==-1
+    and D.actorHoverFrame.rows[1].share.lastPoint[5]==-1 and D.actorHoverFrame.rows[1].name:GetHeight()==16,
+    "damage hover labels are vertically centered inside each bar")
+check(D.actorHoverFrame:GetWidth()==300 and D.actorHoverFrame.rows[1]:GetWidth()==288
+    and D.actorHoverFrame.lastPoint[1]=='BOTTOMLEFT',
+    "damage hover stays compact and anchors above the source bar")
+local oldHunterDamage,oldPetDamage=hunter.damage,pet.damage
+hunter.spells.Melee={damage=40,hits=2,crits=0}; pet.spells.Melee={damage=30,hits=1,crits=0}
+hunter.damage=140; pet.damage=55
+D.showActorHover(D.rows[1].bar,hunter)
+local meleeHover={}
+for i=1,10 do
+    local label=D.actorHoverFrame.rows[i].name:GetText()
+    if label=='Melee' or label=='Wolf: Melee' then meleeHover[label]=D.actorHoverFrame.rows[i].value:GetText() end
+end
+check(meleeHover['Melee']=='40' and meleeHover['Wolf: Melee']=='30',
+    "player and pet Melee entries stay separate in the compact hover")
+hunter.damage,pet.damage=oldHunterDamage,oldPetDamage
+hunter.spells.Melee=nil; pet.spells.Melee=nil
+this=D.rows[1].bar; this.scripts.OnLeave()
+check(not D.actorHoverFrame:IsShown(),"damage hover hides when the bar is left")
+
+-- Player comparison is limited to actors with the same class and includes
+-- the selected player's owned pet damage in each side's total.
+local mage=actor('UI-C','Mage',900,{Arcane={damage=900,hits=3,crits=0}}); mage.classToken='MAGE'; historic.actors[mage.guid]=mage
+D.openBreakdown(hunter,nil); click(p.compareButton)
+local cp=D.comparePanel
+check(cp and cp:IsShown() and cp.rightButton.text:GetText()=='Other'
+    and not p:IsShown()
+    and cp.leftTotal:GetText()=='125  |  12.5' and cp.rightTotal:GetText()=='500  |  50.0',
+    "player comparison replaces the detail window while it is open")
+check(p.talentButton.lastPoint[4]==696 and p.compareButton.lastPoint[4]==818
+    and p.talentButton.lastPoint[4]+p.talentButton:GetWidth()<p.compareButton.lastPoint[4],
+    "talent and comparison buttons occupy separate top-bar slots")
+check(#cp.leftChoices==1 and #cp.rightChoices==1 and cp.leftChoices[1].name=='Archer'
+    and cp.rightChoices[1].name=='Other',
+    "comparison selectors exclude different classes and the currently selected player")
+local shotCompare=nil
+for i=1,14 do if cp.rows[i].name:GetText()=='Shot' then shotCompare=cp.rows[i]; break end end
+check(shotCompare and shotCompare.left:GetText()=='100  80.0%' and shotCompare.right:GetText()=='0  0.0%'
+    and shotCompare.diff:GetText()=='+100',
+    "comparison rows show both percentages and the left-minus-right difference")
+click(cp.leftButton)
+check(cp.leftMenu:IsShown() and not cp.rightMenu:IsShown() and cp.leftMenu:GetHeight()==30,"comparison left selector opens a compact menu")
+click(cp.rightButton)
+check(cp.rightMenu:IsShown() and not cp.leftMenu:IsShown(),"comparison right selector opens its own menu")
+cp:Hide()
+check(p:IsShown() and p.context.history==historic and p.actorKey=='UI-A',
+    "closing comparison restores the previous player detail context")
+historic.actors[mage.guid]=nil
 D.openBreakdown(hunter,nil)
 click(p.spells[2])
 check(p.spellId==entries[2].id and p.metrics[1]:GetText()==D.uiNumber(25),"clicking a spell refreshes its own detailed statistics")
@@ -179,6 +233,28 @@ D.fightHistory[1].actors['UI-M']=melee
 D.openBreakdown(melee,{segment='history',segmentIndex=1,mode='damage'})
 check(p.spells[1].icon.texture=='Interface\\Icons\\INV_Sword_04' and p.spellIcon.texture==p.spells[1].icon.texture,
     "Melee uses the sword icon in the spell list and selected-spell details without a spellbook entry")
+check(D.spellIcon('Raptor Strike')=='Interface\\Icons\\Ability_MeleeDamage'
+    and D.spellIcon('Mongoose Bite')=='Interface\\Icons\\Ability_Hunter_SwiftStrike'
+    and D.spellIcon('Explosive Sheep')=='Interface\\Icons\\Spell_Nature_Polymorph',
+    "bundled spell and item-summon databases replace question-mark icons")
+check(D.spellIcon('Stoneskin Totem IV')=='Interface\\Icons\\Spell_Nature_StoneSkinTotem',
+    "ranked totem names resolve through their base database entry")
+local oldSpellInfo=GetSpellInfo
+GetSpellInfo=function(id)
+    if id==51575 then return 'Carve','Rank 1','Interface\\Icons\\Ability_Hunter_Survivalist' end
+end
+check(D.spellIcon('Carve')=='Interface\\Icons\\Ability_Hunter_Survivalist',
+    "legacy Carve rows use the observed spell ID when their saved entry has no ID")
+check(D.spellIcon('Carve',51575)=='Interface\\Icons\\Ability_Hunter_Survivalist',
+    "DPSLog spell IDs resolve icons for server-added abilities outside the bundled name table")
+GetSpellInfo=oldSpellInfo
+local oldSpellTexture=GetSpellTexture
+GetSpellTexture=function(name,book)
+    if name=='Custom Slash' then return 'Interface\\Icons\\Ability_Test' end
+end
+check(D.spellIcon('Custom Slash')=='Interface\\Icons\\Ability_Test',
+    "live spellbook lookup supplies icons for custom names without a saved ID")
+GetSpellTexture=oldSpellTexture
 for _,view in ipairs({D.mainView,restored}) do
     D.uiCloseMeterMenus(view)
     click(view.modeButton); click(view.segmentButton)
@@ -345,6 +421,7 @@ D.mainView.segmentMenu:Hide(); click(D.mainView.segmentButton)
 check(D.mainView.segmentMenu.up:IsShown() and D.mainView.segmentMenu.down:IsShown() and D.mainView.segmentMenu.buttons[1]:GetWidth()==D.mainView.segmentMenu:GetWidth()-8,"overflowing encounter lists scroll above and below full-width entries")
 -- Hover percentages use the same full owner total as the meter and analysis.
 do
+    local oldShowHover=D.showActorHover; D.showActorHover=nil
     local tt=upvalue(D.actorTooltipOnEnter,'getPlayerTooltip')()
     local oldClear,oldDouble=tt.ClearLines,tt.AddDoubleLine
     local lines={}
@@ -424,5 +501,6 @@ do
     D.mode=oldMode; D.segment=oldSegment; D.segmentIndex=oldIndex
     D.rows[1].actor=mainActor; v.rows[1].actor=extraActor
     v.mode=extraMode; v.segment=extraSegment; v.segmentIndex=extraIndex
+    D.showActorHover=oldShowHover
 end
 print("UI checks: "..checks)

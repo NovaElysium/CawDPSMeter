@@ -3,6 +3,31 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-09-10
+
+### Added
+- Player comparison from the detail view. Select another player of the same
+  class to compare totals, ability values, shares and the left-minus-right
+  difference in one view. Owned pet contributions remain included with their
+  owner.
+
+### Changed
+- The comparison view temporarily replaces the player detail window and
+  restores the previous player, segment, spell and search context when closed.
+- Comparison selectors use compact menus and keep their controls separate from
+  the Talents button.
+
+### Fixed
+- Comparison table headings no longer intersect the divider line or the first
+  row on the Vanilla client.
+- Hover breakdown labels are vertically centered inside their bars.
+- Spell icon lookup includes the expanded local database and runtime spellbook
+  fallbacks used by the current client.
+
+### Validation
+- 281 combat/data regressions, 156 UI checks, 24 release-UI checks and 38
+  threat-alert checks pass against the public package.
+
 ## [1.1.0] - 2026-09-08
 
 ### Added

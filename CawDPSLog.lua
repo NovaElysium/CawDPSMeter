@@ -150,7 +150,7 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
             D.dpsLogCurrent.glancing=truth(a11); D.dpsLogCurrent.crushing=truth(a12)
         end
         local ok,result=pcall(D.acceptStructuredAmount,healing[sub] and "healing" or "damage",
-            info,dst,dstName,spell,effective,truth(critical))
+            info,dst,dstName,spell,effective,truth(critical),id)
         D.dpsLogCurrent=nil; D.threatEventTarget=nil
         if not ok then return reject("amount handler: "..tostring(result)) end
         return result

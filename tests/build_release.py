@@ -16,7 +16,7 @@ toc = (ROOT / 'CawDPSMeter.toc').read_text(encoding='utf-8')
 private_files = {'CawLocalSyncStatus.lua'}
 toc = '\n'.join(line for line in toc.splitlines() if line.strip() not in private_files) + '\n'
 version = re.search(r'^## Version: (.+)$', toc, re.M).group(1).strip()
-assert version == '1.1.0'
+assert version == '1.1.1'
 assert f'D.version = "{version}"' in (ROOT / 'CawDPSMeter.lua').read_text(encoding='utf-8')
 runtime = [line.strip() for line in toc.splitlines() if line.strip() and not line.startswith('#')]
 assert 'CawLocalSyncStatus.lua' not in runtime, 'Local-only status display enabled: do not publish this personal TOC.'

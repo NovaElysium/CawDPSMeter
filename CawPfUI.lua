@@ -1,15 +1,25 @@
 -- Optional docking. Keep UIParent; explicitly follow pfUI's arrow visibility.
 local D=CAW_DPS_METER
-function D.pfDockLayerTree(f,level,strata)
-    if f.cawDropdown then strata="DIALOG"; level=60 end
+function D.pfDockLayerTree(f,level,strata,docked,behindBag)
+    docked=docked or f.cawDockedLayer
+    if f.cawDropdown then
+        -- A docked meter must sit below inventory windows such as Bagshui. Keep
+        -- its menus on the same MEDIUM strata so opening a bag never covers the
+        -- bag with a Caw dropdown. Free meters retain their foreground menu.
+        if behindBag then strata="BACKGROUND"; level=0
+        elseif docked then strata="MEDIUM"; level=30 else strata="DIALOG"; level=60 end
+    end
     f:SetFrameStrata(strata); f:SetFrameLevel(level)
     if not f.GetChildren then return end
     local children={f:GetChildren()}; local i
     for i=1,table.getn(children) do
         local child=children[i]
         local layer=child:GetFrameStrata()
-        if layer~="DIALOG" and layer~="TOOLTIP" then layer=strata end
-        D.pfDockLayerTree(child,level+2,layer)
+        -- Dropdown controls must follow their docked menu. Leaving the
+        -- buttons on DIALOG would put them above Bagshui even though the
+        -- menu frame itself is correctly below it.
+        if behindBag or (docked and f.cawDropdown) or (layer~="DIALOG" and layer~="TOOLTIP") then layer=strata end
+        D.pfDockLayerTree(child,level+2,layer,docked,behindBag)
     end
 end
 
@@ -23,7 +33,9 @@ function D.pfDockRaise(f,rows)
 end
 function D.pfDockDetach(f)
     local pos=f and f.cawDockFree
-    if not pos then return end
+    f.cawDockedLayer=nil
+    if not pos then D.pfDockLayerTree(f,20,"HIGH"); return end
+    D.pfDockLayerTree(f,20,"HIGH")
     f:SetParent(UIParent); f:ClearAllPoints()
     if D.uiAnchorCenter then D.uiAnchorCenter(f,pos.x,pos.y) else f:SetPoint("CENTER",UIParent,"CENTER",pos.x,pos.y) end
     if pos.hiddenByDock then f:Show() end
@@ -77,6 +89,10 @@ end
 
 function D.pfDockPlace(f,enabled,target,previous)
     if not enabled or not target then D.pfDockDetach(f); return previous end
+    if not f.cawDockedLayer then
+        f.cawDockedLayer=true
+        D.pfDockLayerTree(f,0,"MEDIUM",true)
+    end
     if not f.cawDockFree then
         local x,y=f:GetCenter(); local ux,uy=UIParent:GetCenter()
         if D.uiCenterOffset then local dx,dy=D.uiCenterOffset(f); x=ux+dx; y=uy+dy end
@@ -158,9 +174,56 @@ function D.pfDockUpdate()
     end
 end
 
+-- Bagshui's inventory frames are regular MEDIUM-strata windows. A free Caw
+-- frame normally uses HIGH so it stays interactive over the game world, which
+-- would put it in front of an open bag. Track the three inventory windows that
+-- can cover the meter and temporarily move all Caw children to BACKGROUND.
+D.bagshuiWindowVisible=function()
+    if type(Bagshui)~="table" or type(Bagshui.components)~="table" then return false end
+    local names={"Bags","Bank","Keyring"}; local i
+    for i=1,table.getn(names) do
+        local component=Bagshui.components[names[i]]
+        local f=component and component.uiFrame
+        if f then
+            local visible=false
+            if f.IsVisible then visible=f:IsVisible()
+            elseif f.IsShown then visible=f:IsShown() end
+            if visible then return true end
+        end
+    end
+    return false
+end
+
+D.pfBagLayerTick=function()
+    local behind=D.bagshuiWindowVisible and D.bagshuiWindowVisible() or false
+    local i,v,f,state,dockedState,expectedStrata
+    local views={D.mainView}
+    for i=2,D.multiWindowMax do
+        v=D.multiWindows[i]
+        if v and not v.closed then table.insert(views,v) end
+    end
+    for i=1,table.getn(views) do
+        v=views[i]; f=v.id==1 and D.window or v.frame
+        if f then
+            state=behind and true or false
+            dockedState=f.cawDockedLayer and true or false
+            expectedStrata=dockedState and "MEDIUM" or (behind and "BACKGROUND" or "HIGH")
+            if f.cawBagLayerState~=state or f.cawBagLayerDockedState~=dockedState
+                or (f.GetFrameStrata and f:GetFrameStrata()~=expectedStrata) then
+                f.cawBagLayerState=state
+                f.cawBagLayerDockedState=dockedState
+                if behind and not dockedState then D.pfDockLayerTree(f,0,"BACKGROUND",false,true)
+                elseif not behind and not dockedState then D.pfDockLayerTree(f,20,"HIGH")
+                elseif dockedState then D.pfDockLayerTree(f,0,"MEDIUM",true) end
+            end
+        end
+    end
+end
+
 D.pfDockFrame=CreateFrame("Frame",nil,UIParent)
 D.pfDockFrame:SetScript("OnUpdate",function()
     if GetTime()<(D.pfDockNext or 0) then return end
     D.pfDockNext=GetTime()+0.25
     D.pfDockUpdate()
+    if D.pfBagLayerTick then D.pfBagLayerTick() end
 end)

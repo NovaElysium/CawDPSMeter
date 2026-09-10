@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.1.0
+-- Caw DPS Meter v1.1.1
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.1.0"
+D.version = "1.1.1"
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -50,6 +50,7 @@ D.activeAuraSources = {}
 D.activeRosterBuffs = {}
 D.weaponBuffState = {main=nil,off=nil}
 D.pendingSelfTotem = nil
+D.pendingItemSummons = {}
 D.activeCC = {}
 D.lastCCDamage = nil
 D.ccDamageByTarget = {}
@@ -871,35 +872,37 @@ end
 -- booking flat threat such as Hunter pet Growl; otherwise resetFight() on the
 -- first damage event would erase that pre-combat threat.
 D.ensureStarted=ensureStarted
-local function addSpell(a,spell,amount,crit)
+local function addSpell(a,spell,amount,crit,spellId)
     spell=spell or "Melee"; local s=a.spells[spell]
     if not s then s={damage=0,hits=0,crits=0}; a.spells[spell]=s end
+    if spellId and not s.spellId then s.spellId=tonumber(spellId) end
     s.damage=s.damage+amount; s.hits=s.hits+1; if crit then s.crits=s.crits+1 end
 end
-local function addDamage(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
+local function addDamage(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent,spellId)
     amount=tonumber(amount); if not amount or amount<=0 then return false end
     if not ensureStarted() then return false end
     if sourceEvent~="DPSLog" then D.dpsLogRawCommitted=true end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.damage=a.damage+amount; a.hits=a.hits+1; if crit then a.crits=a.crits+1 end
-    addSpell(a,spell,amount,crit); if D.threatOnDamage then D.threatOnDamage(a,amount,spell,crit,D.threatEventTarget) end; D.parsedTotal=D.parsedTotal+1
+    addSpell(a,spell,amount,crit,spellId); if D.threatOnDamage then D.threatOnDamage(a,amount,spell,crit,D.threatEventTarget) end; D.parsedTotal=D.parsedTotal+1
     D.lastRosterCombatActivity=GetTime()
     D.lastParsed=tostring(sourceEvent).." "..tostring(a.name).." "..tostring(spell).." +"..tostring(amount); return true
 end
 
 
-local function addHealSpell(a,spell,amount,crit)
+local function addHealSpell(a,spell,amount,crit,spellId)
     spell=spell or "Healing"; local h=a.healSpells[spell]
     if not h then h={healing=0,hits=0,crits=0}; a.healSpells[spell]=h end
+    if spellId and not h.spellId then h.spellId=tonumber(spellId) end
     h.healing=h.healing+amount; h.hits=h.hits+1; if crit then h.crits=h.crits+1 end
 end
-local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent)
+local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent,spellId)
     amount=tonumber(amount); if not amount or amount<=0 then return false end
     if not ensureStarted() then return false end
     if sourceEvent~="DPSLog" then D.dpsLogRawCommitted=true end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.healing=a.healing+amount; a.heals=a.heals+1; if crit then a.healCrits=a.healCrits+1 end
-    addHealSpell(a,spell,amount,crit); if D.threatOnHealing then D.threatOnHealing(a,amount,spell) end; D.parsedTotal=D.parsedTotal+1
+    addHealSpell(a,spell,amount,crit,spellId); if D.threatOnHealing then D.threatOnHealing(a,amount,spell) end; D.parsedTotal=D.parsedTotal+1
     D.lastRosterCombatActivity=GetTime()
     D.lastParsed=tostring(sourceEvent).." "..tostring(a.name).." "..tostring(spell).." +"..tostring(amount).." heal"; return true
 end
@@ -1169,11 +1172,11 @@ local function buildSyncSnapshot(nonce,target)
         queueSync("A~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(a.name).."~"..syncField(a.guid).."~"..syncField(a.ownerKey).."~"..(a.isPet and "1" or "0").."~"..syncField(a.classToken).."~"..tostring(math.floor(a.damage or 0)).."~"..tostring(math.floor(a.healing or 0)).."~"..tostring(math.floor(a.hits or 0)).."~"..tostring(math.floor(a.crits or 0)).."~"..tostring(math.floor(a.heals or 0)).."~"..tostring(math.floor(a.healCrits or 0)),replyChannel,nil)
         local spell,s
         for spell,s in a.spells do
-            queueSync("D~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(spell).."~"..tostring(math.floor(s.damage or 0)).."~"..tostring(math.floor(s.hits or 0)).."~"..tostring(math.floor(s.crits or 0)),replyChannel,nil)
+            queueSync("D~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(spell).."~"..tostring(math.floor(s.damage or 0)).."~"..tostring(math.floor(s.hits or 0)).."~"..tostring(math.floor(s.crits or 0)).."~"..syncField(s.spellId),replyChannel,nil)
         end
         local hname,h
         for hname,h in a.healSpells do
-            queueSync("E~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(hname).."~"..tostring(math.floor(h.healing or 0)).."~"..tostring(math.floor(h.hits or 0)).."~"..tostring(math.floor(h.crits or 0)),replyChannel,nil)
+            queueSync("E~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(hname).."~"..tostring(math.floor(h.healing or 0)).."~"..tostring(math.floor(h.hits or 0)).."~"..tostring(math.floor(h.crits or 0)).."~"..syncField(h.spellId),replyChannel,nil)
         end
     end
     queueSync("Z~"..syncField(nonce),replyChannel,nil)
@@ -1197,11 +1200,11 @@ local function captureSyncBaseline()
         }
         local spell,s
         for spell,s in a.spells do
-            b.spells[spell]={damage=s.damage or 0,hits=s.hits or 0,crits=s.crits or 0}
+            b.spells[spell]={damage=s.damage or 0,hits=s.hits or 0,crits=s.crits or 0,spellId=s.spellId}
         end
         local hname,h
         for hname,h in a.healSpells do
-            b.healSpells[hname]={healing=h.healing or 0,hits=h.hits or 0,crits=h.crits or 0}
+            b.healSpells[hname]={healing=h.healing or 0,hits=h.hits or 0,crits=h.crits or 0,spellId=h.spellId}
         end
         base.actors[key]=b
     end
@@ -1239,6 +1242,7 @@ local function applyBufferedSnapshot(incoming)
         for spell,rs in r.spells do
             local live=a.spells[spell]
             if not live then live={damage=0,hits=0,crits=0}; a.spells[spell]=live end
+            if rs.spellId and not live.spellId then live.spellId=tonumber(rs.spellId) end
             local bs=b.spells and b.spells[spell] or nil
             if not bs then bs={damage=0,hits=0,crits=0} end
             live.damage=syncMergedValue(rs.damage,bs.damage,live.damage)
@@ -1250,6 +1254,7 @@ local function applyBufferedSnapshot(incoming)
         for hname,rh in r.healSpells do
             local live=a.healSpells[hname]
             if not live then live={healing=0,hits=0,crits=0}; a.healSpells[hname]=live end
+            if rh.spellId and not live.spellId then live.spellId=tonumber(rh.spellId) end
             local bh=b.healSpells and b.healSpells[hname] or nil
             if not bh then bh={healing=0,hits=0,crits=0} end
             live.healing=syncMergedValue(rh.healing,bh.healing,live.healing)
@@ -1456,7 +1461,7 @@ local function applySyncMessage(sender,msg,channel)
         local key=p[3]; local spell=p[4]; if not key or not spell then return end
         local r=incoming.actors[key]
         if not r then r={spells={},healSpells={}}; incoming.actors[key]=r end
-        r.spells[spell]={damage=p[5],hits=p[6],crits=p[7]}
+        r.spells[spell]={damage=p[5],hits=p[6],crits=p[7],spellId=tonumber(p[8])}
         return
     end
 
@@ -1464,7 +1469,7 @@ local function applySyncMessage(sender,msg,channel)
         local key=p[3]; local spell=p[4]; if not key or not spell then return end
         local r=incoming.actors[key]
         if not r then r={spells={},healSpells={}}; incoming.actors[key]=r end
-        r.healSpells[spell]={healing=p[5],hits=p[6],crits=p[7]}
+        r.healSpells[spell]={healing=p[5],hits=p[6],crits=p[7],spellId=tonumber(p[8])}
         return
     end
 
@@ -1900,6 +1905,95 @@ D.tryClaimSelfTotemSource = function(source,spell,ev)
     return info
 end
 
+-- Item summons do not always emit SPELL_SUMMON on the vanilla combat-text
+-- path.  The item cast is visible as a UNIT_CASTEVENT from the player, while
+-- the summoned creature later reports its own cast from a new GUID.  Keep a
+-- short ownership chain for those known pairs instead of assigning the source
+-- to the normal Hunter pet or to the last totem.
+D.itemSummonCasts = {
+    [4074]={name="Explosive Sheep",lifetime=20,petSpells={[4050]=true}},
+}
+D.itemPetSpells = {
+    [4050]={name="Explosive Sheep",summonSpell=4074},
+}
+
+function D.itemSummonSelfInfo()
+    local pg=safeUnitGUID("player") or D.selfKey
+    return pg and D.guidToActor and D.guidToActor[pg]
+end
+
+function D.itemSummonOwnerKey()
+    local owner=D.itemSummonSelfInfo()
+    return owner and (owner.key or owner.guid) or nil
+end
+
+function D.bindSelfItemSummon(source,definition)
+    if not source or not definition then return nil end
+    local owner=D.itemSummonSelfInfo(); if not owner then return nil end
+    local ownerKey=owner.key or owner.guid
+    if source==ownerKey or source==owner.guid then return nil end
+    local existing=D.guidToActor[source]
+    if existing and existing.ownerKey and existing.ownerKey~=ownerKey then return nil end
+    local info=existing or {key=source,guid=source}
+    info.name=definition.name; info.guid=source; info.key=source
+    info.ownerKey=ownerKey; info.isPet=true; info.classToken=nil
+    info.isTotem=false; info.itemSummon=true; info.itemSummonSpell=definition.summonSpell
+    D.guidToActor[source]=info; D.summonActors[source]=info; D.petOwner[source]=ownerKey
+    if D.logLine then D.logLine("pet","bound item summon "..tostring(definition.name).." "..tostring(source).." -> "..tostring(ownerKey)) end
+    return info
+end
+
+function D.observeItemSummonCast(casterGuid,targetGuid,castType,spellId)
+    local id=tonumber(spellId); if not id then return nil end
+    local now=GetTime()
+    local pg=safeUnitGUID("player") or D.selfKey
+    local ownerKey=D.itemSummonOwnerKey()
+    local summon=D.itemSummonCasts[id]
+    if summon and casterGuid==pg then
+        D.pendingItemSummons=D.pendingItemSummons or {}
+        table.insert(D.pendingItemSummons,{spellId=id,name=summon.name,time=now,ownerKey=ownerKey,
+            targetGuid=targetGuid,lifetime=summon.lifetime})
+        while table.getn(D.pendingItemSummons)>8 do table.remove(D.pendingItemSummons,1) end
+        if D.logLine then D.logLine("pet","item summon cast "..tostring(summon.name).." ("..tostring(id)..")") end
+        return true
+    end
+    local petSpell=D.itemPetSpells[id]
+    if not petSpell or not casterGuid or casterGuid==pg then return nil end
+    local list=D.pendingItemSummons or {}; local i=table.getn(list)
+    while i>=1 do
+        local pending=list[i]
+        local age=now-(pending.time or 0)
+        if age>(pending.lifetime or 20) then table.remove(list,i)
+        elseif not pending.used and pending.ownerKey==ownerKey
+            and (not pending.targetGuid or not targetGuid or pending.targetGuid==targetGuid) then
+            local definition={name=petSpell.name,summonSpell=petSpell.summonSpell}
+            local info=D.bindSelfItemSummon(casterGuid,definition)
+            if info then pending.used=true; return info end
+        end
+        i=i-1
+    end
+    return nil
+end
+
+function D.tryClaimSelfItemSource(source,spell,ev)
+    if not source or not spell or D.guidToActor[source] then return D.guidToActor[source] end
+    local lowered=string.lower(tostring(spell))
+    local petSpell
+    if string.find(lowered,"explosive sheep",1,true) then petSpell=D.itemPetSpells[4050] end
+    if not petSpell then return nil end
+    local list=D.pendingItemSummons or {}; local now=GetTime(); local i=table.getn(list)
+    while i>=1 do
+        local pending=list[i]
+        if now-(pending.time or 0)>=(pending.lifetime or 20) then table.remove(list,i)
+        elseif not pending.used and pending.ownerKey==D.itemSummonOwnerKey() then
+            local info=D.bindSelfItemSummon(source,{name=petSpell.name,summonSpell=petSpell.summonSpell})
+            if info then pending.used=true; return info end
+        end
+        i=i-1
+    end
+    return nil
+end
+
 D.applyLivePlayerAuraDiff = function(ti,current)
     if not ti or not current then return end
     local a=utilityActor(ti)
@@ -2128,6 +2222,7 @@ local function parseGeneric(ev,text)
     if amount then
         local a=actorFromSourceToken(source)
         if not a and D.tryClaimSelfTotemSource then a=D.tryClaimSelfTotemSource(source,spell,ev) end
+        if not a and D.tryClaimSelfItemSource then a=D.tryClaimSelfItemSource(source,spell,ev) end
         if a then
             noteEnemyTarget(hitTarget,amount)
             rememberAuraCast(a,spell,hitTarget)
@@ -2697,7 +2792,7 @@ end
 -- Narrow structured-input bridge; utility/death/RAW threat confirmation remain
 -- on their existing paths. Only damage and healing have one exclusive producer.
 D.parseRawReplay=parseRaw
-D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit)
+D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,spellId)
     if D.localPlayerDead and not D.inCombat then return false end
     if not info or not ensureStarted() then return false end
     D.threatEventTarget=nil
@@ -2714,7 +2809,7 @@ D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit)
                 active.breakAmount=amount; active.breakTime=hit.time
             end
         end
-        return addDamage(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog")
+        return addDamage(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId)
     end
     local ti=target and D.guidToActor[target]
     if ti then
@@ -2722,7 +2817,7 @@ D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit)
         D.backfillAuraSource(ta and ta.buffs,spell,info.name,info.guid or info.key)
         D.addAuraSourceHealing(ta and ta.buffs,spell,info.name,info.guid or info.key,amount)
     end
-    return addHealing(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog")
+    return addHealing(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId)
 end
 
 local function deepCopyTable(src)
@@ -3792,6 +3887,7 @@ while i<=MAX_ROWS do
     local hover=bar:CreateTexture(nil,"HIGHLIGHT"); hover:SetAllPoints(bar); hover:SetTexture(FLAT_TEX); hover:SetVertexColor(1,1,1,0.06)
     bar:SetScript("OnEnter",function()
         local row=this.detailsRow; local a=row and row.actor
+        if D.showActorHover and D.showActorHover(this,a) then return end
         local tt=getPlayerTooltip()
         if not a or not tt then return end
         local cr,cg,cb=classColor(a)
@@ -4033,7 +4129,10 @@ while i<=MAX_ROWS do
         skinCawHoverTooltip(tt)
         tt:Show()
     end)
-    bar:SetScript("OnLeave",function() local tt=getPlayerTooltip(); if tt then tt:Hide() end end)
+    bar:SetScript("OnLeave",function()
+        if D.hideActorHover then D.hideActorHover() end
+        local tt=getPlayerTooltip(); if tt then tt:Hide() end
+    end)
     -- Keep one reference to the full primary actor-tooltip handler so extra
     -- windows can render the exact same mouseover details for every mode.
     if not D.actorTooltipOnEnter and bar.GetScript then D.actorTooltipOnEnter=bar:GetScript("OnEnter") end
@@ -4989,7 +5088,10 @@ function D.createMultiWindow(saved)
                 tt:Show()
             end
         end)
-        bar:SetScript("OnLeave",function() local tt=getPlayerTooltip(); if tt then tt:Hide() end end)
+        bar:SetScript("OnLeave",function()
+            if D.hideActorHover then D.hideActorHover() end
+            local tt=getPlayerTooltip(); if tt then tt:Hide() end
+        end)
         bar.multiRow=v.rows[ri]
         ri=ri+1
     end
@@ -5417,6 +5519,7 @@ events:SetScript("OnEvent",function()
         end
         if D.handleUnitCastAuraSource then D.handleUnitCastAuraSource(arg1,arg2,arg3,arg4) end
         if D.handleUnitCastCC then D.handleUnitCastCC(arg1,arg2,arg3,arg4) end
+        if D.observeItemSummonCast then D.observeItemSummonCast(arg1,arg2,arg3,arg4) end
         if D.threatOnCast then D.threatOnCast(arg1,arg2,arg3,arg4) end
     elseif event=="CHAT_MSG_COMBAT_FRIENDLY_DEATH" then
         if D.captureFriendlyDeath then D.captureFriendlyDeath(event,arg1) end

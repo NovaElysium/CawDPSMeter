@@ -585,7 +585,7 @@ D.window:Show(); scrollView.frame:Show()
 D.pfDockToggle(nil); D.pfDockToggle(scrollView)
 check(D.window.parent==UIParent and scrollView.frame.parent==UIParent,'docked windows retain independent UIParent input hierarchy')
 check(scrollView.frame.lastPoint[2]==D.window and scrollView.frame.lastPoint[3]=='BOTTOMLEFT' and scrollView.frame.lastPoint[4]==0 and scrollView.frame.lastPoint[5]==0,'docked windows attach directly edge-to-edge without summed width offsets')
-check(D.window:GetFrameStrata()=='HIGH' and scrollView.lockButton:GetFrameStrata()=='HIGH' and scrollView.lockButton:GetFrameLevel()>scrollView.frame:GetFrameLevel(),'window buttons are above their own backgrounds and pfUI chat')
+check(D.window:GetFrameStrata()=='MEDIUM' and scrollView.lockButton:GetFrameStrata()=='MEDIUM' and scrollView.lockButton:GetFrameLevel()>scrollView.frame:GetFrameLevel(),'docked windows stay below inventory layers while their buttons remain above their bars')
 check(D.window.lastPoint[3]=='BOTTOMRIGHT' and scrollView.frame.lastPoint[2]==D.window,'docking roots the window chain inside chat instead of above it')
 local oldLocked=scrollView.locked
 this=scrollView.lockButton; arg1='LeftButton'; this.scripts.OnClick()
@@ -774,6 +774,12 @@ D.pendingSelfTotem={name='Mana Spring Totem',time=NOW}
 fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_PET_DAMAGE',"0xFA01's Searing Bolt hits 0xF1 for 60.")
 check(D.actors['0xFA01'] and D.actors['0xFA01'].name=='Searing Totem' and D.actors['0xFA01'].damage==100 and D.actors['0xFA01'].isTotem,'hover source actor retains Searing identity and damage after another totem cast')
 check(not D.tryClaimSelfTotemSource('0xFA03','Unknown Item Spell','CHAT_MSG_SPELL_PET_DAMAGE'),'unknown summon spell is not assigned to last totem')
+D.pendingItemSummons={}; D.dpsLogActive=false
+D.observeItemSummonCast('0x1',nil,'CAST',4074)
+local itemPet=D.observeItemSummonCast('0xFA10','0xF1','CAST',4050)
+check(itemPet and itemPet.name=='Explosive Sheep' and itemPet.ownerKey=='0x1' and not itemPet.isTotem,'item summon cast chain binds the new pet GUID to its player owner')
+fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_PET_DAMAGE',"0xFA10's Explosive Sheep hits 0xF1 for 30.")
+check(D.actors['0xFA10'] and D.actors['0xFA10'].damage==30 and D.actors['0xFA10'].spells['Explosive Sheep'].damage==30,'item summon damage is recorded under the item pet instead of the normal Hunter pet')
 D.threatCalEnabled=false
 check(not D.dpsLogActive,"missing DPSLog API keeps RAW producer")
 CombatLogGetCurrentEventInfo=function() return 'SWING_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,30,-1,1,0,0,0,'1' end

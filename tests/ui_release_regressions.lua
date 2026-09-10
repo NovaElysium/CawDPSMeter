@@ -87,11 +87,28 @@ pfUI.chat.right:SetWidth(380); pfUI.chat.right:SetHeight(180)
 D.pfDockToggle(nil); D.pfDockToggle(extra)
 for _,view in ipairs({D.mainView,extra}) do
     D.uiStyleView(view); D.uiCloseMeterMenus(view); click(view.segmentButton)
-    assert(view.segmentMenu:GetFrameStrata()=='DIALOG' and view.segmentMenu.buttons[1]:GetFrameStrata()=='DIALOG')
+    assert(view.segmentMenu:GetFrameStrata()=='MEDIUM' and view.segmentMenu.buttons[1]:GetFrameStrata()=='MEDIUM')
     assert(view.footerRegions.summary:GetFrameLevel()>view.frame:GetFrameLevel())
 end
 check(true,'restyling docked windows keeps dropdowns above player bars and the footer interactive')
 D.pfDockToggle(extra); D.pfDockToggle(nil); pfUI=nil
+-- Bagshui inventory windows are MEDIUM-strata. A visible bag must cover a
+-- free Caw window as well as a docked one, and closing it restores the normal
+-- foreground hierarchy.
+local bagFrame=CreateFrame('Frame',nil,UIParent)
+Bagshui={components={Bags={uiFrame=bagFrame}}}
+bagFrame:Show(); D.pfBagLayerTick()
+assert(D.window:GetFrameStrata()=='BACKGROUND' and extra.frame:GetFrameStrata()=='BACKGROUND')
+D.uiCloseMeterMenus(D.mainView); click(D.mainView.segmentButton)
+assert(D.mainView.segmentMenu:GetFrameStrata()=='BACKGROUND' and D.mainView.segmentMenu.buttons[1]:GetFrameStrata()=='BACKGROUND')
+pfUI={chat={right=CreateFrame('Frame',nil,UIParent)}}
+D.pfDockToggle(nil); D.pfDockToggle(nil); D.pfBagLayerTick()
+assert(D.window:GetFrameStrata()=='BACKGROUND','undocking while Bagshui is open keeps the free meter behind the bag')
+pfUI=nil
+bagFrame:Hide(); D.pfBagLayerTick()
+check(D.window:GetFrameStrata()=='HIGH' and extra.frame:GetFrameStrata()=='HIGH',
+    'Bagshui visibility moves free meters behind the bag and restores them afterward')
+Bagshui=nil
 -- Full recorded numbers must survive display abbreviation in both meter types.
 a.damage=12501234; a.healing=12501234; a.damageTaken=12501234
 D.fightHistory[1].duration=10
