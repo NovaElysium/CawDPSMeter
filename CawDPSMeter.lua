@@ -1557,6 +1557,13 @@ local INTERRUPT_SPELLS = {
     ["Silence"]=true
 }
 
+-- RavenCraft reports an interrupted enemy cast as UNIT_CASTEVENT FAIL at the
+-- same timestamp as the player's Kick/Pummel hit. Keep that cast alive for a
+-- short hand-off window so the damage line can still prove the interrupt.
+-- A normal failed cast is discarded by tryRecordInterrupt once this window
+-- expires, so it cannot turn a later Kick into a false interrupt.
+local INTERRUPT_FAIL_GRACE=0.75
+
 -- Common Vanilla/RavenCraft dispel/cleanse abilities. RavenCraft can log a
 -- successful self-dispel as "Your <aura> is removed." followed by "You cast X."
 -- rather than an explicit "X dispels Y" combat-log line.
@@ -2159,6 +2166,10 @@ local function tryRecordInterrupt(sourceInfo,ability,target)
     if not cast then return false end
     local age=GetTime()-(cast.time or 0)
     if age<0 or age>8 then
+        D.activeEnemyCasts[target]=nil
+        return false
+    end
+    if cast.failedAt and GetTime()-(cast.failedAt or 0)>INTERRUPT_FAIL_GRACE then
         D.activeEnemyCasts[target]=nil
         return false
     end
@@ -5507,7 +5518,20 @@ events:SetScript("OnEvent",function()
         if requestCombatSync then requestCombatSync(true) end
         updateUI()
     elseif event=="UNIT_CASTEVENT" then
-        if arg3=="CAST" or arg3=="FAIL" then D.activeEnemyCasts[arg1 or ""]=nil end
+        local castGuid=arg1 or ""
+        if arg3=="CAST" then
+            -- CAST is a completed enemy cast. It must not remain eligible for
+            -- the next damaging ability as a ghost interrupt.
+            D.activeEnemyCasts[castGuid]=nil
+        elseif arg3=="FAIL" then
+            -- On RavenCraft, an interrupted cast emits FAIL in the same frame
+            -- as the player's Kick/Pummel hit. Defer removal briefly so the
+            -- RAW damage line can correlate the landed interrupt. A genuine
+            -- failed cast is removed by tryRecordInterrupt after the grace
+            -- window expires.
+            local pending=D.activeEnemyCasts[castGuid]
+            if pending then pending.failedAt=GetTime() end
+        end
         if D.threatDebugEnabled and D.captureThreatDebug then
             D.captureThreatDebug("CAST",tostring(arg1).." -> "..tostring(arg2).." | "..tostring(arg3).." | spellId "..tostring(arg4).." | duration "..tostring(arg5))
         end

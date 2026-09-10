@@ -84,6 +84,21 @@ check(next(D.actors['0x1'].interrupts)==nil,"completed cast is not interrupted l
 fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE","0xF1 begins to cast Bolt.")
 fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_SELF_DAMAGE","Your Kick misses 0xF1.")
 check(D.activeEnemyCasts['0xF1']~=nil,"failed interrupt preserves enemy cast")
+-- RavenCraft emits UNIT_CASTEVENT FAIL for an interrupted cast in the same
+-- frame as the player's damaging Kick. The short deferred cleanup must let
+-- the hit correlate to the failed enemy cast and count exactly one interrupt.
+PARTY_COUNT=1; UNITS.party1={guid="0x3",name="Friend",class="ROGUE"}
+fire(D.events,"PARTY_MEMBERS_CHANGED")
+fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE","0xF1 begins to cast Bolt.")
+fire(D.events,"UNIT_CASTEVENT","0xF1","0x1","FAIL",100)
+fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_FRIENDLYPLAYER_DAMAGE","0x3's Kick hits 0xF1 for 10.")
+check(D.actors['0x3'].interrupts.Bolt.count==1,"UNIT_CASTEVENT FAIL keeps same-frame interrupt")
+fresh()
+fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE","0xF1 begins to cast Bolt.")
+fire(D.events,"UNIT_CASTEVENT","0xF1","0x1","FAIL",100)
+NOW=NOW+1
+fire(D.events,"RAW_COMBATLOG","CHAT_MSG_SPELL_FRIENDLYPLAYER_DAMAGE","0x3's Kick hits 0xF1 for 10.")
+check(next(D.actors['0x3'].interrupts)==nil,"expired failed cast does not create ghost interrupt")
 -- Ordinary stun expiration is not a damage break.
 D.activeCC['0xF1']={spell="Hammer of Justice",time=NOW,sourceKey="0x1"}
 fire(D.events,"RAW_COMBATLOG","CHAT_MSG_COMBAT_SELF_HITS","You hit 0xF1 for 5.")

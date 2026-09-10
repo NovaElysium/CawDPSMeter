@@ -19,6 +19,11 @@ breakdown text is vertically centered in each bar. Spell icons use the expanded
 local database together with the client's spellbook and available runtime APIs,
 so more combat-log abilities resolve without a question-mark icon.
 
+Interrupt tracking now handles RavenCraft's same-frame `UNIT_CASTEVENT FAIL`
+sequence correctly: a landed Kick or Pummel can still be matched to the cast,
+while genuinely failed casts expire quickly and cannot create a later false
+interrupt.
+
 Under **Settings > pfUI**, **Keep Caw behind inventory windows** provides a
 manual fallback for other bag addons that do not expose a frame Caw can detect.
 It is disabled by default and applies per character; disabling it restores the
@@ -28,6 +33,6 @@ No additional combat-log commands or server data are required for comparison;
 it reads the combat data already stored by Caw. A `/reload` after replacing the
 addon files is sufficient for existing installations.
 
-Validation: 281 combat/data regressions, 158 UI checks, 25 release-UI checks
+Validation: 283 combat/data regressions, 158 UI checks, 25 release-UI checks
 and 38 threat-alert checks pass with the mocked Vanilla client APIs. The public
 archive excludes the local maintainer overlay and any saved variables.

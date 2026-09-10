@@ -25,9 +25,12 @@ and [Semantic Versioning](https://semver.org/).
 - Hover breakdown labels are vertically centered inside their bars.
 - Spell icon lookup includes the expanded local database and runtime spellbook
   fallbacks used by the current client.
+- Interrupt tracking now keeps an enemy cast briefly after RavenCraft reports a
+  same-frame `UNIT_CASTEVENT FAIL`, so landed Kick/Pummel interrupts are counted
+  without turning later failed casts into false interrupts.
 
 ### Validation
-- 281 combat/data regressions, 158 UI checks, 25 release-UI checks and 38
+- 283 combat/data regressions, 158 UI checks, 25 release-UI checks and 38
   threat-alert checks pass against the public package.
 
 ## [1.1.0] - 2026-09-08
