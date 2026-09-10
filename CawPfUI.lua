@@ -195,7 +195,11 @@ D.bagshuiWindowVisible=function()
 end
 
 D.pfBagLayerTick=function()
-    local behind=D.bagshuiWindowVisible and D.bagshuiWindowVisible() or false
+    -- There is no shared inventory-frame API on the 1.12 client.  Keep the
+    -- Bagshui auto-detection for the default behavior, with an opt-in
+    -- character setting for other bag addons whose frames cannot be identified.
+    local forced=CawDPSMeterCharDB and CawDPSMeterCharDB.bagLayerAlwaysBehind
+    local behind=forced and true or (D.bagshuiWindowVisible and D.bagshuiWindowVisible() or false)
     local i,v,f,state,dockedState,expectedStrata
     local views={D.mainView}
     for i=2,D.multiWindowMax do

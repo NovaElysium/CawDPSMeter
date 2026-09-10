@@ -109,6 +109,13 @@ bagFrame:Hide(); D.pfBagLayerTick()
 check(D.window:GetFrameStrata()=='HIGH' and extra.frame:GetFrameStrata()=='HIGH',
     'Bagshui visibility moves free meters behind the bag and restores them afterward')
 Bagshui=nil
+-- Other bag addons do not expose a shared frame API on this client.  The
+-- optional character setting provides a deterministic fallback for them.
+CawDPSMeterCharDB.bagLayerAlwaysBehind=true; D.pfBagLayerTick()
+assert(D.window:GetFrameStrata()=='BACKGROUND' and extra.frame:GetFrameStrata()=='BACKGROUND')
+CawDPSMeterCharDB.bagLayerAlwaysBehind=false; D.pfBagLayerTick()
+check(D.window:GetFrameStrata()=='HIGH' and extra.frame:GetFrameStrata()=='HIGH',
+    'optional inventory layering fallback works without Bagshui and restores normal strata')
 -- Full recorded numbers must survive display abbreviation in both meter types.
 a.damage=12501234; a.healing=12501234; a.damageTaken=12501234
 D.fightHistory[1].duration=10

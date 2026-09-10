@@ -602,6 +602,7 @@ end
 function D.uiRefresh(v)
     if v then D.layoutMultiWindow(v) else D.applyCompactWindowLayout() end
     D.uiRefreshMeters(); if D.pfDockUpdate then D.pfDockUpdate() end
+    if D.pfBagLayerTick then D.pfBagLayerTick() end
     D.uiPersist()
 end
 
@@ -618,6 +619,7 @@ local controls={
     {"Text","percent","Show percentages",0,"bool"},{"General","autoCurrent","Switch to Current when combat starts",0,"bool"},
     {"General","hover","Show tooltips on player bars",0,"bool"},{"Window","locked","Lock window",0,"lock"},
     {"pfUI","docked","Dock to the right chat panel",0,"dock"},{"pfUI","alternate","Show meters when chat is hidden",0,"alternate"},
+    {"pfUI","behindInventory","Keep Caw behind inventory windows",0,"behindInventory"},
     {"Threat","glow","Screen glow",0,"alertBool"},{"Threat","sound","Warning sound",0,"alertBool"},
     {"Threat","threshold","Warning threshold (%)",1,"alertNumber"},
     {"Threat","cooldown","Warning cooldown (sec)",1,"alertNumber"}
@@ -636,6 +638,7 @@ local function optionValue(p,c)
     if kind=="lock" then if v then return v.locked else return D.locked end end
     if kind=="dock" then if v then return v.pfDock else return CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockMain end end
     if kind=="alternate" then return CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockAlternate end
+    if kind=="behindInventory" then return CawDPSMeterCharDB and CawDPSMeterCharDB.bagLayerAlwaysBehind end
     return D.uiSettings(v)[key]
 end
 local function optionRange(p,c)
@@ -662,6 +665,9 @@ local function setOption(p,c,value)
     elseif kind=="lock" then D.uiSetLock(v,value)
     elseif kind=="dock" then if (old and true or false)~=value then D.pfDockToggle(v) end
     elseif kind=="alternate" then if (old and true or false)~=value then D.pfDockToggleVisibility() end
+    elseif kind=="behindInventory" then
+        CawDPSMeterCharDB=CawDPSMeterCharDB or {}; CawDPSMeterCharDB.bagLayerAlwaysBehind=value and true or false
+        if D.pfBagLayerTick then D.pfBagLayerTick() end
     elseif kind=="size" then if key=="width" then f:SetWidth(value) else f:SetHeight(value) end
     elseif kind=="rows" then f:SetHeight(D.uiHeightForRows(v,value))
     else D.uiSettings(v)[key]=value end
@@ -721,7 +727,7 @@ function D.refreshOptions()
     else
         p.preview:Show(); updatePreview(p); p.target:Show(); p.editing:Show(); p.copyButton:Show(); p.threatNote:Hide()
     end
-    p.pfNote:SetText(p.page=="pfUI" and "With chat switching off, the meters follow the chat panel's visibility. This setting applies to all docked windows." or "")
+    p.pfNote:SetText(p.page=="pfUI" and "Chat switching applies to all docked windows. Enable the inventory option for bag addons Caw cannot identify automatically." or "")
 end
 function D.uiConfirmReset(kind)
     if not D.resetDialog then

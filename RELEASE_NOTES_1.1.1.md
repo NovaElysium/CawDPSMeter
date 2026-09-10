@@ -19,10 +19,15 @@ breakdown text is vertically centered in each bar. Spell icons use the expanded
 local database together with the client's spellbook and available runtime APIs,
 so more combat-log abilities resolve without a question-mark icon.
 
+Under **Settings > pfUI**, **Keep Caw behind inventory windows** provides a
+manual fallback for other bag addons that do not expose a frame Caw can detect.
+It is disabled by default and applies per character; disabling it restores the
+normal foreground layer.
+
 No additional combat-log commands or server data are required for comparison;
 it reads the combat data already stored by Caw. A `/reload` after replacing the
 addon files is sufficient for existing installations.
 
-Validation: 281 combat/data regressions, 156 UI checks, 24 release-UI checks
+Validation: 281 combat/data regressions, 158 UI checks, 25 release-UI checks
 and 38 threat-alert checks pass with the mocked Vanilla client APIs. The public
 archive excludes the local maintainer overlay and any saved variables.

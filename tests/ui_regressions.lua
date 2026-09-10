@@ -38,6 +38,14 @@ check(CawDPSMeterCharDB.extraWindows[1].appearance.scale==v.appearance.scale,"ex
 click(byLabel(options,"Bars"))
 local heightRow=options.controls.rowHeight; slide(heightRow,24)
 check(v.rows[1].frame:GetHeight()==24 and D.rows[1].frame:GetHeight()==23,"bar height changes immediately without changing primary")
+click(byLabel(options,"pfUI"))
+local inventoryCheck=options.controls.behindInventory.check
+this=inventoryCheck; inventoryCheck:SetChecked(1); inventoryCheck.scripts.OnClick()
+check(CawDPSMeterCharDB.bagLayerAlwaysBehind and D.window:GetFrameStrata()=="BACKGROUND"
+    and v.frame:GetFrameStrata()=="BACKGROUND","inventory layering option lowers free windows without Bagshui")
+this=inventoryCheck; inventoryCheck:SetChecked(nil); inventoryCheck.scripts.OnClick()
+check(not CawDPSMeterCharDB.bagLayerAlwaysBehind and D.window:GetFrameStrata()=="HIGH"
+    and v.frame:GetFrameStrata()=="HIGH","disabling inventory layering restores the normal foreground strata")
 local checkbox=options.controls.percent.check
 click(byLabel(options,"Text"))
 this=checkbox; checkbox:SetChecked(1); checkbox.scripts.OnClick()

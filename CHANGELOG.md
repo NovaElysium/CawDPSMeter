@@ -16,6 +16,8 @@ and [Semantic Versioning](https://semver.org/).
   restores the previous player, segment, spell and search context when closed.
 - Comparison selectors use compact menus and keep their controls separate from
   the Talents button.
+- Added an optional inventory-layer fallback under Settings > pfUI for bag
+  addons that do not expose a detectable inventory frame.
 
 ### Fixed
 - Comparison table headings no longer intersect the divider line or the first
@@ -25,7 +27,7 @@ and [Semantic Versioning](https://semver.org/).
   fallbacks used by the current client.
 
 ### Validation
-- 281 combat/data regressions, 156 UI checks, 24 release-UI checks and 38
+- 281 combat/data regressions, 158 UI checks, 25 release-UI checks and 38
   threat-alert checks pass against the public package.
 
 ## [1.1.0] - 2026-09-08

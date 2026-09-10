@@ -80,6 +80,10 @@ The optional DPSLog backend needs a compatible DLL installed separately. Collect
 and talent sync continue independently of the visible UI. See
 [1.1.1 release notes](RELEASE_NOTES_1.1.1.md) for available statistics and validation.
 
+If you use a bag addon other than Bagshui, enable **Settings > pfUI > Keep Caw
+behind inventory windows** when you want the inventory to stay above Caw. The
+option is off by default so Caw remains fully interactive in the normal layout.
+
 ## Features
 
 - **Damage & DPS** and **Healing & HPS**, with per-spell breakdown; pet damage
