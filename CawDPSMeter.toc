@@ -25,3 +25,4 @@ CawPfUI.lua
 CawUI.lua
 CawTalentView.lua
 CawBreakdown.lua
+CawLocalSyncStatus.lua
