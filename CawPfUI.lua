@@ -6,7 +6,9 @@ function D.pfDockLayerTree(f,level,strata,docked,behindBag)
         -- A docked meter must sit below inventory windows such as Bagshui. Keep
         -- its menus on the same MEDIUM strata so opening a bag never covers the
         -- bag with a Caw dropdown. Free meters retain their foreground menu.
-        if behindBag then strata="BACKGROUND"; level=0
+        -- BACKGROUND keeps the entire menu below bags, but it still needs a
+        -- higher frame level than Caw's rows and footer on that same strata.
+        if behindBag then strata="BACKGROUND"; level=30
         elseif docked then strata="MEDIUM"; level=30 else strata="DIALOG"; level=60 end
     end
     f:SetFrameStrata(strata); f:SetFrameLevel(level)
@@ -33,8 +35,15 @@ function D.pfDockRaise(f,rows)
 end
 function D.pfDockDetach(f)
     local pos=f and f.cawDockFree
+    local wasDocked=f.cawDockedLayer
     f.cawDockedLayer=nil
-    if not pos then D.pfDockLayerTree(f,20,"HIGH"); return end
+    if not pos then
+        -- pfDockPlace also calls this for an already-free window every 0.25s.
+        -- Rebuilding its tree here would undo the bag layer, then rebuild it
+        -- again in pfBagLayerTick, even though neither window changed.
+        if wasDocked or not f.cawInputLayersReady then D.pfDockLayerTree(f,20,"HIGH") end
+        return
+    end
     D.pfDockLayerTree(f,20,"HIGH")
     f:SetParent(UIParent); f:ClearAllPoints()
     if D.uiAnchorCenter then D.uiAnchorCenter(f,pos.x,pos.y) else f:SetPoint("CENTER",UIParent,"CENTER",pos.x,pos.y) end

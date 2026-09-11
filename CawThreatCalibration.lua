@@ -13,9 +13,17 @@ D.threatCalDuplicateResponses = 0
 D.threatCalLastPayload = nil
 D.threatCalLastPayloadAt = 0
 D.threatCalSession = nil
-D.threatCalMaxEvents = 12000
-D.threatCalMaxSnapshots = 6000
-D.threatCalMaxCasts = 6000
+-- Caps lowered after a live account's SavedVariables file reached ~30 MB
+-- (12 sessions x the old limits). A single truncated write of a file that large
+-- corrupts the whole account-wide CawDPSMeter.lua on the next login, wiping
+-- CawDPSMeterDB (window layout) along with the calibration log. See CHANGELOG.
+D.threatCalMaxEvents = 2000
+D.threatCalMaxSnapshots = 800
+D.threatCalMaxCasts = 1500
+D.threatCalMaxSessions = 3
+D.threatCalMaxActorContexts = 300
+D.threatCalMaxTargets = 500
+D.threatCalMaxRequestContexts = 500
 D.threatCalPendingRequests = {}
 D.threatCalRequestSerial = 0
 D.threatCalUnmatchedResponses = 0
@@ -129,7 +137,7 @@ function D.threatCalNewSession()
     }
     table.insert(db.sessions,s)
     -- Keep a practical rolling history. Older sessions can be supplied separately if needed.
-    while table.getn(db.sessions)>12 do table.remove(db.sessions,1) end
+    while table.getn(db.sessions)>(D.threatCalMaxSessions or 3) do table.remove(db.sessions,1) end
     D.threatCalSession=s
     if D.dpsLogSaveStatus then D.dpsLogSaveStatus(s) end
     D.threatCalActorContextCache={}
@@ -165,7 +173,7 @@ function D.threatCalActorContext(guid,force)
     local previous=D.threatCalActorContextCache[guid]
     if not force and previous and now-previous.time<1 then return previous.id end
     local s=D.threatCalSession; s.actorContexts=s.actorContexts or {}
-    if table.getn(s.actorContexts)>=2000 then
+    if table.getn(s.actorContexts)>=(D.threatCalMaxActorContexts or 300) then
         s.actorContextOmitted=(s.actorContextOmitted or 0)+1
         return nil -- never link fresh data to a stale context after the cap
     end
@@ -231,6 +239,7 @@ end
 
 -- Default on for this calibration build; an explicit manual off survives login.
 function D.threatCalStart()
+    if not D.parserEnabled() then return end
     if D.threatCalEnabled then return end
     D.serverThreatSnapshot=nil
     if D.threatApiProbeEnabled or (D.threatApiLastRequestAt and D.threatApiLastRequestAt>0 and D.threatCalNow()-D.threatApiLastRequestAt<2) then D.threatCalAttributionUncertain=true end
@@ -255,7 +264,7 @@ function D.threatCalObserveTarget()
         local s=D.threatCalEnabled and D.threatCalSession
         if s then
             s.targets=s.targets or {}
-            if table.getn(s.targets)<6000 then
+            if table.getn(s.targets)<(D.threatCalMaxTargets or 500) then
                 table.insert(s.targets,{t=now-(s.startedGameTime or 0),guid=guid,name=name,generation=state.generation,segmentSerial=state.segmentSerial})
             else s.droppedTargetContexts=(s.droppedTargetContexts or 0)+1 end
         end
@@ -273,7 +282,7 @@ function D.threatCalObserveRequest(prefix,payload,channel)
     if not s then return end
     s.observedRequests=(s.observedRequests or 0)+1
     s.requestContexts=s.requestContexts or {}
-    if table.getn(s.requestContexts)<6000 then table.insert(s.requestContexts,rec)
+    if table.getn(s.requestContexts)<(D.threatCalMaxRequestContexts or 500) then table.insert(s.requestContexts,rec)
     else s.droppedRequestContexts=(s.droppedRequestContexts or 0)+1 end
 end
 
@@ -297,6 +306,7 @@ function D.threatCalLimit(field,code)
 end
 
 function D.threatCalTrace(kind,rec)
+    if not D.parserEnabled() then return end
     if not D.threatCalEnabled or not D.threatCalSession then return end
     local s=D.threatCalSession
     s[kind]=s[kind] or {}
@@ -307,6 +317,7 @@ function D.threatCalTrace(kind,rec)
 end
 
 function D.threatCalRecordRaw(ev,text)
+    if not D.parserEnabled() then return end
     if not D.threatCalEnabled or not text then return end
     if string.find(text,"Faerie Fire",1,true) or string.find(text,"Demoralizing Roar",1,true) then
         D.threatCalTrace("druidRaw",{event=ev,text=string.sub(text,1,400)})
@@ -318,6 +329,7 @@ function D.threatCalRecordRaw(ev,text)
 end
 
 function D.threatCalRecordEvent(rec)
+    if not D.parserEnabled() then return end
     if not D.threatCalEnabled or not D.threatCalSession then return end
     local t=D.threatCalSession.events
     if table.getn(t)>=D.threatCalMaxEvents then D.threatCalLimit("droppedEvents","CAL_EVENT_LIMIT"); return end
@@ -332,6 +344,7 @@ function D.threatCalRecordEvent(rec)
 end
 
 function D.threatCalRecordCast(casterGuid,targetGuid,castType,spellId)
+    if not D.parserEnabled() then return end
     if not D.threatCalEnabled or not D.threatCalSession then return end
     if castType=="MAINHAND" or castType=="OFFHAND" then
         D.threatCalSession.filteredSwings=(D.threatCalSession.filteredSwings or 0)+1
@@ -398,7 +411,7 @@ function D.threatCalTakeRequestForResponse()
 end
 
 function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
-    local session=D.threatCalEnabled and D.threatCalSession
+    local session=D.parserEnabled() and D.threatCalEnabled and D.threatCalSession
     local now=D.threatCalNow()
     local state=D.threatCalObserveTarget()
     local observed=D.threatCalObservedRequest
@@ -612,7 +625,7 @@ F:SetScript("OnEvent",function()
         D.threatCalInstallObserver()
         CawDPSMeterCharDB=CawDPSMeterCharDB or {}
         if CawDPSMeterCharDB.threatCalAutoStart==nil then CawDPSMeterCharDB.threatCalAutoStart=true end
-        if CawDPSMeterCharDB.threatCalAutoStart and not D.threatCalEnabled then
+        if D.parserEnabled() and CawDPSMeterCharDB.threatCalAutoStart and not D.threatCalEnabled then
             D.threatCalStart()
             if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff7fbf4dCaw DPS Meter:|r Automatic calibration recording active. Data is saved on normal logout/exit; API comparisons remain provisional.") end
         end
@@ -626,7 +639,7 @@ F:SetScript("OnEvent",function()
     elseif event=="UNIT_CASTEVENT" then
         if D.threatCalEnabled then D.threatCalRecordCast(arg1,arg2,arg3,arg4) end
     elseif event=="PLAYER_LOGOUT" then
-        if D.threatCalSession and D.threatCalEnabled then
+        if D.parserEnabled() and D.threatCalSession and D.threatCalEnabled then
             if D.dpsLogSaveStatus then D.dpsLogSaveStatus(D.threatCalSession) end
             D.threatCalSession.endedAt=D.threatCalStamp()
             D.threatCalSession.stopReason="logout"
@@ -686,6 +699,10 @@ SlashCmdList["CAWDPSTHREATCAL"]=function(msg)
         return
     end
     if msg=="on" or msg=="" then
+        if not D.parserEnabled() then
+            if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("Caw: Enable the combat parser in Settings > General before starting calibration.") end
+            return
+        end
         CawDPSMeterCharDB=CawDPSMeterCharDB or {}
         CawDPSMeterCharDB.threatCalAutoStart=true
         if D.threatCalEnabled then return end

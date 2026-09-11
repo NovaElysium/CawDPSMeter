@@ -26,6 +26,7 @@ lua.execute((ROOT / 'tests/regressions.lua').read_text(encoding='utf-8'))
 lua.execute((ROOT / 'tests/ui_regressions.lua').read_text(encoding='utf-8'))
 lua.execute((ROOT / 'tests/ui_release_regressions.lua').read_text(encoding='utf-8'))
 lua.execute((ROOT / 'tests/threat_alert_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/parser_control_regressions.lua').read_text(encoding='utf-8'))
 private = ADDON_ROOT / 'CawLocalSyncStatus.lua'
 if private.exists():
     lua.execute(private.read_text(encoding='utf-8'), name=private.name)

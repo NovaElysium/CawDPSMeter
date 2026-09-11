@@ -31,7 +31,7 @@ via SuperWoW, so it tracks combat events the default combat log never exposes, a
 it can pull data from other players running the addon to fill in what your client
 did not see. Up to four independent windows share the same combat data.
 
-## Interface in 1.1.1
+## Interface in 1.1.2
 
 Left-click a player bar for an ability breakdown with player and segment selection.
 Use **Compare** in that view to compare two players of the same class, including
@@ -127,7 +127,7 @@ Without SuperWoW loaded the meter will not receive raw combat data.
    `<WoW>\Interface\AddOns\CawDPSMeter\`
    (the folder must be named `CawDPSMeter`, not `CawDPSMeter-main`).
 3. Make sure `SuperAPI` is installed and SuperWoW is active.
-4. Restart the client after updating to 1.1.1 so the new UI and data modules load;
+4. Restart the client after updating to 1.1.2 so the new UI and data modules load;
    `/reload` alone is not enough on the first update. Type `/cd` to show the meter.
    Existing settings are kept.
 
@@ -157,6 +157,14 @@ continue while hidden. Free windows remain independent. No pfUI files are
 modified; without pfUI the addon works normally.
 
 ## Threat and Caw Sync
+
+Settings > General provides **Enable combat parser** and **Sync damage and
+healing**. Both default to on and are saved per character across all windows.
+Parser off pauses local recording and combat snapshots, saves the current
+fight and displays **Parser paused**. Resuming starts a new segment on the next
+combat event. Sync off alone keeps local recording active. Previously recorded
+or synchronized data is retained. Talent sharing and live server threat remain
+available; paused local data is excluded from calibration recording.
 
 Damage/healing combat snapshots use Caw Sync. Compatible clients also announce
 their presence and capabilities automatically. Threat tooltips distinguish
@@ -215,9 +223,11 @@ disabled it. `/cdthreatcal off` disables recording and its automatic startup;
 No files are uploaded automatically. With TWThreat loaded, Caw passively records
 its replies; standalone calibration can query eligible combat targets.
 
-The latest 12 sessions are kept, each limited to 12,000 model events, 6,000 casts,
-6,000 snapshots, 2,000 actor contexts and bounded supporting traces. Save by
-reloading or logging out normally. To report a discrepancy, include version,
+The latest 3 sessions are kept, each limited to 2,000 model events, 1,500 casts,
+800 snapshots, 300 actor contexts and bounded supporting traces. These caps were lowered after a live account file reached ~30 MB; a truncated
+write of a file that large corrupts every SavedVariables table sharing the
+file, not just the calibration log. Existing oversized data is trimmed to the
+new caps on first login after updating. Save by reloading or logging out normally. To report a discrepancy, include version,
 target, ability and relevant saved calibration data. Recordings can contain player
 names and GUIDs; review them before sharing publicly.
 
@@ -257,7 +267,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.1.1 release notes](RELEASE_NOTES_1.1.1.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.1.2 release notes](RELEASE_NOTES_1.1.2.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

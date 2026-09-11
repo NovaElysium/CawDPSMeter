@@ -62,6 +62,39 @@ UnitBuff=function() error("unavailable") end
 D.scanUnitBuffs("party1","0x3")
 check(D.activeRosterBuffs['0x3|Renew']~=nil,"failed scan preserves last known aura")
 UnitBuff=function() end
+do
+    local oldInfo,oldBuff,oldEnchant=GetSpellInfo,UnitBuff,GetWeaponEnchantInfo
+    local oldTooltip,oldLine=D.buffScanTooltip,CawDPSMeterBuffScanTooltipTextLeft1
+    local oldRosterBuffs=D.activeRosterBuffs
+    local names,lookups,tooltipReads={},0,0
+    for i=1,12 do names[97000+i]=D.buffSpellNames[97000+i]; D.buffSpellNames[97000+i]=nil end
+    D.buffScanTooltip={ClearLines=function() end,SetUnitBuff=function() tooltipReads=tooltipReads+1 end}
+    CawDPSMeterBuffScanTooltipTextLeft1={GetText=function() return 'Tooltip fallback' end}
+    GetSpellInfo=function(id) lookups=lookups+1; return 'Combat buff '..(id-97000) end
+    GetWeaponEnchantInfo=function() end
+    UnitBuff=function(unit,i) if unit=='player' and i<=12 then return 'texture',1,97000+i end end
+    D.activeRosterBuffs={}; fresh(); fire(D.events,'PLAYER_REGEN_DISABLED')
+    check(lookups==12 and tooltipReads==0,'combat-start buff names use the available spell API without hidden tooltip builds')
+    local own=D.actors[D.selfKey]
+    check(own and own.buffs['Combat buff 1'] and own.buffs['Combat buff 12'],
+        'all opening buffs are recorded immediately with native spell names')
+    fresh(); fire(D.events,'PLAYER_REGEN_DISABLED')
+    check(lookups==12 and tooltipReads==0,'later combat starts reuse resolved buff names')
+    for _,failure in ipairs({'missing','error','empty','wrong-type'}) do
+        D.buffSpellNames[97001]=nil
+        if failure=='missing' then GetSpellInfo=nil
+        elseif failure=='error' then GetSpellInfo=function() error('unavailable') end
+        elseif failure=='empty' then GetSpellInfo=function() return '' end
+        else GetSpellInfo=function() return {} end end
+        local before=tooltipReads
+        check(D.getUnitBuffName('player',1,97001)=='Tooltip fallback' and tooltipReads==before+1,
+            'buff tooltip fallback survives '..failure..' spell API')
+    end
+    for i=1,12 do D.buffSpellNames[97000+i]=names[97000+i] end
+    GetSpellInfo,UnitBuff,GetWeaponEnchantInfo=oldInfo,oldBuff,oldEnchant
+    D.buffScanTooltip=oldTooltip; CawDPSMeterBuffScanTooltipTextLeft1=oldLine
+    D.activeRosterBuffs=oldRosterBuffs
+end
 fresh()
 fire(D.events,"RAW_COMBATLOG","CHAT_MSG_COMBAT_SELF_HITS","You hit 0xF1 for 10.")
 D.threatOnCast("0x1",nil,"FAIL",5384)
@@ -340,8 +373,8 @@ check(not failed.buffScanComplete and failed.attackPowerBase==nil,'unavailable s
 local unknown=D.threatCalSession.actorContexts[D.threatCalActorContext('0x99',true)]
 check(not unknown.available and unknown.level==nil,'unresolved actor retains unavailable context')
 local contexts=D.threatCalSession.actorContexts
-while table.getn(contexts)<2000 do table.insert(contexts,{}) end
-check(D.threatCalActorContext('0x2',true)==nil and table.getn(contexts)==2000,'context cap does not attach stale metadata')
+while table.getn(contexts)<300 do table.insert(contexts,{}) end
+check(D.threatCalActorContext('0x2',true)==nil and table.getn(contexts)==300,'context cap does not attach stale metadata')
 UnitBuff=function() end
 D.threatCalEnabled=false
 local petActor={guid='0x2',isPet=true}
@@ -687,7 +720,7 @@ NOW=NOW+2; D.threatCalSendRequest(); NOW=NOW+0.05
 D.threatCalMaxSnapshots=0
 fire(D.threatCalFrame,'CHAT_MSG_ADDON','TWT ','TWTv4=Hunter:1:778:100:1','PARTY','Hunter')
 check(D.serverThreatCurrent() and D.threatValueForActor(D.serverThreatCurrent().actors[1])==778,'recording cap does not freeze the live server display')
-D.threatCalMaxSnapshots=6000
+D.threatCalMaxSnapshots=800
 UNITS.target.guid='0xF2'; D.threatCalObserveTarget()
 check(not D.serverThreatCurrent(),'target switch immediately invalidates server display')
 UNITS.target.guid='0xF1'; D.threatCalObserveTarget()

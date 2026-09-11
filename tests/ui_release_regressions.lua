@@ -3,6 +3,25 @@ local D=CAW_DPS_METER
 local checks=0
 local function check(ok,label) assert(ok,label); checks=checks+1; print('PASS RELEASE UI '..label) end
 local function click(f) this=f; arg1='LeftButton'; f:GetScript('OnClick')() end
+local function menusAboveRows(view,strata)
+    local highest=view.footerRegions.summary:GetFrameLevel()
+    for _,row in ipairs(view.id==1 and D.rows or view.rows) do
+        highest=math.max(highest,row.frame:GetFrameLevel(),row.bar:GetFrameLevel())
+    end
+    for _,key in ipairs({'modeMenu','segmentMenu','reportMenu','overflowMenu'}) do
+        local menu=view[key]
+        if menu then
+            D.uiCloseMeterMenus(view); menu:Show()
+            assert(menu:GetFrameStrata()==strata and menu:GetFrameLevel()>highest,
+                key..' must cover player bars and footer in window '..view.id)
+            for _,b in ipairs(menu.buttons or {}) do
+                assert(b:GetFrameStrata()==strata and b:GetFrameLevel()>menu:GetFrameLevel(),
+                    key..' entries must remain above their menu background')
+            end
+        end
+    end
+    D.uiCloseMeterMenus(view)
+end
 local function item(menu,key,value,index)
     if menu.up then for i=1,16 do click(menu.up) end end
     for page=1,16 do
@@ -99,6 +118,8 @@ local bagFrame=CreateFrame('Frame',nil,UIParent)
 Bagshui={components={Bags={uiFrame=bagFrame}}}
 bagFrame:Show(); D.pfBagLayerTick()
 assert(D.window:GetFrameStrata()=='BACKGROUND' and extra.frame:GetFrameStrata()=='BACKGROUND')
+menusAboveRows(D.mainView,'BACKGROUND'); menusAboveRows(extra,'BACKGROUND')
+check(true,'all free-meter dropdowns cover player bars while remaining behind Bagshui')
 D.uiCloseMeterMenus(D.mainView); click(D.mainView.segmentButton)
 assert(D.mainView.segmentMenu:GetFrameStrata()=='BACKGROUND' and D.mainView.segmentMenu.buttons[1]:GetFrameStrata()=='BACKGROUND')
 pfUI={chat={right=CreateFrame('Frame',nil,UIParent)}}
@@ -113,6 +134,27 @@ Bagshui=nil
 -- optional character setting provides a deterministic fallback for them.
 CawDPSMeterCharDB.bagLayerAlwaysBehind=true; D.pfBagLayerTick()
 assert(D.window:GetFrameStrata()=='BACKGROUND' and extra.frame:GetFrameStrata()=='BACKGROUND')
+menusAboveRows(D.mainView,'BACKGROUND'); menusAboveRows(extra,'BACKGROUND')
+check(true,'all dropdowns cover bars with the inventory fallback enabled')
+extra.rebuildSegments()
+table.insert(D.fightHistory,{name='Newly finished encounter',duration=5,actors={}})
+D.uiCloseMeterMenus(extra); click(extra.segmentButton)
+local lastEntry=extra.segmentMenu.buttons[math.min(12,table.getn(D.fightHistory)+2)]
+check(lastEntry:IsShown() and lastEntry:GetFrameStrata()=='BACKGROUND'
+    and lastEntry:GetFrameLevel()>extra.segmentMenu:GetFrameLevel(),
+    'encounter entries keep the correct layer after history changes')
+table.remove(D.fightHistory)
+-- Steady docking polls must not tear down and rebuild the entire free meter's
+-- hierarchy, especially HIGH -> BACKGROUND twice per tick with the bag option.
+D.pfDockUpdate(); D.pfBagLayerTick()
+local tree,layerCalls=D.pfDockLayerTree,0
+D.pfDockLayerTree=function(f,level,strata,docked,behind)
+    layerCalls=layerCalls+1; return tree(f,level,strata,docked,behind)
+end
+for i=1,8 do D.pfDockUpdate(); D.pfBagLayerTick() end
+D.pfDockLayerTree=tree
+check(layerCalls==0,'unchanged free windows need no layer rebuilds across eight docking polls (observed '..layerCalls..')')
+menusAboveRows(D.mainView,'BACKGROUND'); menusAboveRows(extra,'BACKGROUND')
 CawDPSMeterCharDB.bagLayerAlwaysBehind=false; D.pfBagLayerTick()
 check(D.window:GetFrameStrata()=='HIGH' and extra.frame:GetFrameStrata()=='HIGH',
     'optional inventory layering fallback works without Bagshui and restores normal strata')

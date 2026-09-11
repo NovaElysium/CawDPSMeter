@@ -29,6 +29,20 @@ local function diagDump()
         say("#"..tostring(i).." "..tostring(r.stamp or "").." ["..tostring(r.level).."]["..tostring(r.code).."] "..tostring(r.message)..((r.count or 1)>1 and (" x"..tostring(r.count)) or ""))
     end
 end
+local function diagIcons()
+    local m=D.missingSpellIcons or {}
+    local list={}
+    local k,v
+    for k,v in pairs(m) do table.insert(list,{name=k,count=v.count,spellId=v.spellId}) end
+    if table.getn(list)==0 then say("No missing spell icons recorded this session."); return end
+    table.sort(list,function(a,b) return (a.count or 0)>(b.count or 0) end)
+    say("Missing spell icons this session, most frequent first (report these to extend the icon database):")
+    local i
+    for i=1,math.min(20,table.getn(list)) do
+        local e=list[i]
+        say(" - "..tostring(e.name).." x"..tostring(e.count)..(e.spellId and (" [id "..tostring(e.spellId).."]") or " [no id]"))
+    end
+end
 SLASH_CAWDPSDEBUG1="/cddebug"
 SlashCmdList["CAWDPSDEBUG"]=function(msg)
     msg=string.lower(tostring(msg or ""))
@@ -39,8 +53,9 @@ SlashCmdList["CAWDPSDEBUG"]=function(msg)
         return
     end
     if msg=="dump" then diagDump(); return end
+    if msg=="icons" then diagIcons(); return end
     if msg=="help" then
-        say("/cddebug = existing runtime status | /cddebug status | /cddebug dump | /cddebug clear")
+        say("/cddebug = existing runtime status | /cddebug status | /cddebug dump | /cddebug icons | /cddebug clear")
         return
     end
     if oldDebug then oldDebug(msg) else diagStatus() end

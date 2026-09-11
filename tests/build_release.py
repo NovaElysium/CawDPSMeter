@@ -16,7 +16,7 @@ toc = (ROOT / 'CawDPSMeter.toc').read_text(encoding='utf-8')
 private_files = {'CawLocalSyncStatus.lua'}
 toc = '\n'.join(line for line in toc.splitlines() if line.strip() not in private_files) + '\n'
 version = re.search(r'^## Version: (.+)$', toc, re.M).group(1).strip()
-assert version == '1.1.1'
+assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Expected a stable release version'
 assert f'D.version = "{version}"' in (ROOT / 'CawDPSMeter.lua').read_text(encoding='utf-8')
 runtime = [line.strip() for line in toc.splitlines() if line.strip() and not line.startswith('#')]
 assert 'CawLocalSyncStatus.lua' not in runtime, 'Local-only status display enabled: do not publish this personal TOC.'
@@ -62,7 +62,7 @@ if args.sync_checkout and (checkout / '.git').is_dir():
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(public_bytes(name))
     for src in (ROOT / 'tests').iterdir():
-        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua', 'threat_alert_regressions.lua'):
+        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua', 'threat_alert_regressions.lua', 'parser_control_regressions.lua', 'benchmark_raw_parser.py', 'RAW_PARSER_PERFORMANCE.md'):
             dst = checkout / 'tests' / src.name
             dst.parent.mkdir(exist_ok=True)
             shutil.copyfile(src, dst)

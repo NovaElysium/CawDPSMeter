@@ -64,6 +64,7 @@ local function choose(active,reason)
     status()
 end
 function D.dpsLogRawGate(ev,text)
+    if not D.parserEnabled() then return true end
     -- A DLL may publish its Lua functions after addon loading. Recheck before
     -- handling the first amount, not only on a timer after it has been counted.
     if not D.dpsLogInitialized and not D.dpsLogRawCommitted
@@ -93,6 +94,7 @@ local function spellName(id,name)
 end
 function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,dstRaid,
     a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12)
+    if not D.parserEnabled() then return false end
     if not D.dpsLogActive and not D.dpsLogProbing then return false end
     if type(src)=="string" and string.find(src,"^0x0+$") then src=nil end
     if type(dst)=="string" and string.find(dst,"^0x0+$") then dst=nil end
@@ -197,6 +199,7 @@ function D.dpsLogInitialize()
 end
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:SetScript("OnEvent",function()
+    if not D.parserEnabled() then return end
     if event=="PLAYER_ENTERING_WORLD" then D.dpsLogInitialize()
     elseif event=="COMBAT_LOG_EVENT_UNFILTERED" and (D.dpsLogActive or D.dpsLogProbing) then
         local ok,err=pcall(function() D.dpsLogReceive(CombatLogGetCurrentEventInfo()) end)
@@ -204,6 +207,7 @@ f:SetScript("OnEvent",function()
     end
 end)
 f:SetScript("OnUpdate",function()
+    if not D.parserEnabled() then return end
     if D.dpsLogProbing and D.dpsLogProbeAt and GetTime()-D.dpsLogProbeAt>=0.5 then
         choose(false,"no structured event during RAW probe")
     end
@@ -216,6 +220,7 @@ end)
 D.dpsLogInitialize()
 SLASH_CAWINPUT1="/cawinput"
 SlashCmdList.CAWINPUT=function()
+    if not D.parserEnabled() then DEFAULT_CHAT_FRAME:AddMessage("Caw: Combat parser paused. Resume in Settings > General."); return end
     DEFAULT_CHAT_FRAME:AddMessage("Caw input: "..(D.dpsLogProbing and "waiting for DPSLog event" or (D.dpsLogActive and "DPSLog damage/healing + RAW utility" or "SuperWoW RAW"))
         .." | Events: "..D.dpsLogEvents.." | Rejected: "..D.dpsLogRejected)
     if D.dpsLogLastError then DEFAULT_CHAT_FRAME:AddMessage(D.dpsLogLastError) end

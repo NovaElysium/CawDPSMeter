@@ -1,10 +1,18 @@
--- Caw DPS Meter v1.1.1
+-- Caw DPS Meter v1.1.2
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.1.1"
+D.version = "1.1.2"
+function D.parserEnabled()
+    return not CawDPSMeterCharDB or CawDPSMeterCharDB.parserEnabled~=false
+end
+function D.combatSyncEnabled()
+    return D.parserEnabled() and (not CawDPSMeterCharDB or CawDPSMeterCharDB.combatSyncEnabled~=false)
+end
+D.parserEvents={RAW_COMBATLOG=true,UNIT_CASTEVENT=true,CHAT_MSG_COMBAT_FRIENDLY_DEATH=true,
+    PLAYER_REGEN_DISABLED=true,PLAYER_REGEN_ENABLED=true,UNIT_INVENTORY_CHANGED=true,PLAYER_AURAS_CHANGED=true}
 D.inCombat = false
 D.startTime = 0
 D.lastDuration = 0
@@ -119,6 +127,7 @@ D.getWeaponBuffName = function(slot,label)
 end
 
 D.scanWeaponBuffs = function()
+    if not D.parserEnabled() then return end
     if not GetWeaponEnchantInfo then return end
 
     -- Remove only weapon entries; ordinary aura-scan entries stay untouched.
@@ -213,6 +222,16 @@ D.playerBuffScanState = {}
 D.getUnitBuffName = function(unit,index,spellId)
     if spellId and D.buffSpellNames[spellId] then return D.buffSpellNames[spellId] end
 
+    -- DPSLog/compatible extensions expose names directly. Resolve each new
+    -- spell ID once without constructing a tooltip during the opening scan.
+    if type(spellId)=="number" and type(GetSpellInfo)=="function" then
+        local ok,name=pcall(GetSpellInfo,spellId)
+        if ok and type(name)=="string" and name~="" then
+            D.buffSpellNames[spellId]=name
+            return name
+        end
+    end
+
     -- RavenCraft's UnitBuff exposes the spell ID as return #3 but not the
     -- localized aura name. Read the first line of Blizzard's buff tooltip so
     -- item buffs, Aspects, Paladin auras and other unknown spell IDs do not
@@ -239,6 +258,7 @@ D.getUnitBuffName = function(unit,index,spellId)
 end
 
 D.scanUnitBuffs = function(unit,targetKey,current)
+    if not D.parserEnabled() then return end
     if not UnitBuff or not unit or not targetKey then return end
     local observed={}
     local i
@@ -831,6 +851,7 @@ local function resetFight()
     D.segmentSerial=(D.segmentSerial or 0)+1
 end
 local function ensureStarted()
+    if not D.parserEnabled() then return false end
     -- A roster damage/heal event can arrive before this client receives
     -- PLAYER_REGEN_DISABLED. If the previous fight is already closed,
     -- start a fresh segment *before* counting this first RAW event.
@@ -1048,6 +1069,16 @@ local function refreshRoster()
 end
 
 -- Caw Sync -----------------------------------------------------------------
+function D.cancelCombatSync()
+    D.syncQueue={}; D.syncNonce=nil; D.syncIncoming=nil; D.syncSelectedSource=nil
+    D.syncOffers={}; D.syncOfferDeadline=0; D.syncRequested=false; D.syncRequestSent=false
+    D.nextCombatSyncCheck=0
+end
+function D.setCombatSyncEnabled(enabled)
+    CawDPSMeterCharDB=CawDPSMeterCharDB or {}
+    CawDPSMeterCharDB.combatSyncEnabled=enabled and true or false
+    D.cancelCombatSync()
+end
 local function syncChannel()
     if GetNumRaidMembers and GetNumRaidMembers()>0 then return "RAID" end
     if GetNumPartyMembers and GetNumPartyMembers()>0 then return "PARTY" end
@@ -1092,6 +1123,7 @@ local function splitSync(msg)
 end
 
 local function queueSync(message,channel,target)
+    if not D.combatSyncEnabled() then return end
     if not message or string.len(message)>240 then return end
     if table.getn(D.syncQueue)>=(D.syncQueueMax or 1000) then
         D.syncQueueDropped=(D.syncQueueDropped or 0)+1
@@ -1143,6 +1175,7 @@ local function sendSyncNow(message,channel,target)
 end
 
 local function flushSyncQueue()
+    if not D.combatSyncEnabled() then D.cancelCombatSync(); return end
     if table.getn(D.syncQueue)<=0 or not getAddonSender() then return end
     local now=GetTime()
     if now<(D.syncNextSend or 0) then return end
@@ -1299,6 +1332,7 @@ local function applyBufferedSnapshot(incoming)
 end
 
 requestCombatSync=function(force)
+    if not D.combatSyncEnabled() then return end
     if D.syncRequested and not force then return end
     if not D.inCombat and not force then return end
     if D.syncEnemySet and D.syncEnemySet()=="" then return end
@@ -1374,7 +1408,10 @@ local function applySyncMessage(sender,msg,channel)
         if D.talentSyncReceive then D.talentSyncReceive(sender,p,channel) end
         return
     end
-    if kind=="P" then
+    -- P~1~GUID announces a peer; P~nonce~name selects a combat source.
+    -- Combat nonces contain a timestamp and player name, never just "1".
+    -- Keep both wire formats so existing clients can still request snapshots.
+    if kind=="P" and p[2]=="1" then
         if D.threatPeerReceive then D.threatPeerReceive(sender,p,channel) end
         return
     end
@@ -1382,6 +1419,7 @@ local function applySyncMessage(sender,msg,channel)
         if D.threatSyncReceive then D.threatSyncReceive(sender,p,channel) end
         return
     end
+    if not D.combatSyncEnabled() then return end
     local selfName=UnitName("player") or ""
 
     -- Phase 1: responders advertise only their current fight age. This avoids
@@ -1598,6 +1636,10 @@ end
 
 D.captureIncomingDamage = function(ev,text)
     if not ev or not text then return false end
+    -- Every supported incoming hit contains one of these literal fragments.
+    -- Aura, miss and cast messages need none of the damage-pattern scans.
+    if not string.find(text," for ",1,true)
+        and not string.find(text," damage from ",1,true) then return false end
 
     local targetInfo=nil
     local sourceGuid=nil
@@ -1608,30 +1650,33 @@ D.captureIncomingDamage = function(ev,text)
     local isSelfTarget=false
     local _,_,a,b,c,d
 
-    -- Enemy melee -> player.
-    _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) hits you for ([0-9]+)")
-    if not amount then
-        _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) crits you for ([0-9]+)")
-        if amount then crit=true end
-    end
-    if amount then
-        isSelfTarget=true
-        targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
-        targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
-        ability="Melee"
-    end
-
-    -- Enemy spell/ability -> player.
-    if not amount then
-        _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) hits you for ([0-9]+)")
+    -- Only direct self-target hits can match the first four patterns.
+    if string.find(text," you for ",1,true) then
+        -- Enemy melee -> player.
+        _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) hits you for ([0-9]+)")
         if not amount then
-            _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) crits you for ([0-9]+)")
+            _,_,sourceGuid,amount=string.find(text,"^(0x[%x]+) crits you for ([0-9]+)")
             if amount then crit=true end
         end
         if amount then
             isSelfTarget=true
             targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
             targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
+            ability="Melee"
+        end
+
+        -- Enemy spell/ability -> player.
+        if not amount then
+            _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) hits you for ([0-9]+)")
+            if not amount then
+                _,_,sourceGuid,ability,amount=string.find(text,"^(0x[%x]+)'s (.-) crits you for ([0-9]+)")
+                if amount then crit=true end
+            end
+            if amount then
+                isSelfTarget=true
+                targetInfo=D.guidToActor[safeUnitGUID("player") or D.selfKey]
+                targetGuid=targetInfo and (targetInfo.guid or targetInfo.key) or nil
+            end
         end
     end
 
@@ -2092,15 +2137,18 @@ end
 
 D.captureCCDamageCandidate = function(ev,text)
     if not D.inCombat or not ev or not text then return end
+    if not string.find(text," for ",1,true) then return end
 
     local source=nil
     local target=nil
+    local ability="Melee"
+    local namedAbility
 
     -- Self melee/spell damage.
     local _,_,selfTarget=string.find(text,"^You hit (0x[%x]+) for ")
     if not selfTarget then _,_,selfTarget=string.find(text,"^You crit (0x[%x]+) for ") end
-    if not selfTarget then _,_,selfTarget=string.find(text,"^Your .- hits (0x[%x]+) for ") end
-    if not selfTarget then _,_,selfTarget=string.find(text,"^Your .- crits (0x[%x]+) for ") end
+    if not selfTarget then _,_,namedAbility,selfTarget=string.find(text,"^Your (.-) hits (0x[%x]+) for ") end
+    if not selfTarget then _,_,namedAbility,selfTarget=string.find(text,"^Your (.-) crits (0x[%x]+) for ") end
     if selfTarget then
         source=D.guidToActor[safeUnitGUID("player") or D.selfKey]
         target=selfTarget
@@ -2108,8 +2156,8 @@ D.captureCCDamageCandidate = function(ev,text)
         -- Group melee/spell damage. This is deliberately roster-only.
         local _,_,guid,guidTarget=string.find(text,"^(0x[%x]+) hits (0x[%x]+) for ")
         if not guid then _,_,guid,guidTarget=string.find(text,"^(0x[%x]+) crits (0x[%x]+) for ") end
-        if not guid then _,_,guid,guidTarget=string.find(text,"^(0x[%x]+)'s .- hits (0x[%x]+) for ") end
-        if not guid then _,_,guid,guidTarget=string.find(text,"^(0x[%x]+)'s .- crits (0x[%x]+) for ") end
+        if not guid then _,_,guid,namedAbility,guidTarget=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+) for ") end
+        if not guid then _,_,guid,namedAbility,guidTarget=string.find(text,"^(0x[%x]+)'s (.-) crits (0x[%x]+) for ") end
         if guid then
             source=actorFromSourceToken(guid)
             target=guidTarget
@@ -2117,17 +2165,7 @@ D.captureCCDamageCandidate = function(ev,text)
     end
 
     if source and target then
-        local ability="Melee"
-
-        -- RC41 source/target detection above is intentionally untouched.
-        -- Only decorate the already-proven candidate with the damage ability.
-        local _,_,namedAbility=string.find(text,"^Your (.-) hits 0x[%x]+ for ")
-        if not namedAbility then _,_,namedAbility=string.find(text,"^Your (.-) crits 0x[%x]+ for ") end
-        if not namedAbility then
-            local _,_,srcGuid,groupAbility=string.find(text,"^(0x[%x]+)'s (.-) hits 0x[%x]+ for ")
-            if not srcGuid then _,_,srcGuid,groupAbility=string.find(text,"^(0x[%x]+)'s (.-) crits 0x[%x]+ for ") end
-            if srcGuid and groupAbility then namedAbility=groupAbility end
-        end
+        -- The successful source/target pattern already extracted the ability.
         if namedAbility and namedAbility~="" then ability=namedAbility end
 
         local _,_,breakAmount=string.find(text," for ([0-9]+)")
@@ -2222,6 +2260,7 @@ local function parseSelf(ev,text)
 end
 local function parseGeneric(ev,text)
     if D.dpsLogActive then return false end
+    if string.sub(text,1,2)~="0x" then return false end
     local crit=isCritText(text); local _,_,source,spell,amount
     local meleeTarget
     _,_,source,meleeTarget,amount=string.find(text,"^(0x[%x]+) hits (0x[%x]+) for ([0-9]+)")
@@ -2251,6 +2290,11 @@ end
 
 local function parseHealing(ev,text)
     if D.dpsLogActive then return false end
+    if not string.find(text," heals ",1,true)
+        and not string.find(text," health from ",1,true) then
+        if string.find(ev,"HEAL",1,true) then captureUtilityUnknown(ev,text) end
+        return false
+    end
     local crit=isCritText(text); local _,_,source,spell,target,amount
 
     -- Self direct heals. Check the critical form first: the generic
@@ -2427,153 +2471,183 @@ D.updateWeaponBuffs = function()
 end
 
 
+-- Resource ticks share one shape. Keep the accepted spellings exact; the
+-- pre-combat boundary deliberately normalizes case before using this helper.
+do
+    local resourceWords={health=true,Health=true,mana=true,Mana=true,
+        rage=true,Rage=true,energy=true,Energy=true}
+    function D.isRawResourceGain(text)
+        local _,_,resource=string.find(text,"^[0-9]+ ([^ ]+) from ")
+        return resource and resourceWords[resource]
+    end
+end
+
+-- Literal guards only reject impossible matches. Custom RAW subtypes still
+-- reach every applicable pattern in the original order and keep diagnostics.
 local function parseUtility(ev,text)
     local _,_,source,spell,target,removed
 
-    -- Enemy cast start, e.g. "0xF130... begins to cast Lizard Bolt."
-    _,_,target,spell=string.find(text,"^(0x[%x]+) begins to cast (.-)%.")
-    if target and spell then
-        rememberEnemyCast(target,spell)
-        return true
-    end
-
-    -- Failed interrupt attempts do not count and leave the enemy cast active.
-    _,_,spell,target=string.find(text,"^Your (.-) misses (0x[%x]+)%.")
-    if not spell then _,_,spell,target=string.find(text,"^Your (.-) was dodged by (0x[%x]+)%.") end
-    if not spell then _,_,spell,target=string.find(text,"^Your (.-) was parried by (0x[%x]+)%.") end
-    if not spell then _,_,spell,target=string.find(text,"^Your (.-) was resisted by (0x[%x]+)%.") end
-    if not spell then _,_,spell,target=string.find(text,"^Your (.-) is resisted by (0x[%x]+)%.") end
-    if spell and target then
-        local pg=safeUnitGUID("player") or D.selfKey
-        local si=D.guidToActor[pg]
-        if D.threatOnSpellFailed then D.threatOnSpellFailed(pg,target,spell) end
-        clearRecentAuraCast(target,spell)
-        if si then return true end
-    end
-
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) misses (0x[%x]+)%.")
-    if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was dodged by (0x[%x]+)%.") end
-    if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was parried by (0x[%x]+)%.") end
-    if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was resisted by (0x[%x]+)%.") end
-    if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) is resisted by (0x[%x]+)%.") end
-    if source and spell and target then
-        local si=actorFromSourceToken(source)
-        if si then
-            if D.threatOnSpellFailed then D.threatOnSpellFailed(source,target,spell) end
-            clearRecentAuraCast(target,spell)
+    if string.find(text," begins to cast ",1,true) then
+        -- Enemy cast start, e.g. "0xF130... begins to cast Lizard Bolt."
+        _,_,target,spell=string.find(text,"^(0x[%x]+) begins to cast (.-)%.")
+        if target and spell then
+            rememberEnemyCast(target,spell)
             return true
         end
-        if ignoreOutsideRoster(source) then return true end
     end
 
-    -- Non-damaging interrupt abilities such as Counterspell/Spell Lock can
-    -- appear as a plain hit without a numeric damage amount.
-    _,_,spell,target=string.find(text,"^Your (.-) hits (0x[%x]+)%.")
-    if spell and target then
-        local pg=safeUnitGUID("player") or D.selfKey
-        if D.threatOnSpellLanded then D.threatOnSpellLanded(pg,target,spell) end
-        if INTERRUPT_SPELLS[spell] then
+    if string.find(text," misses ",1,true) or string.find(text," by ",1,true) then
+        -- Failed interrupt attempts do not count and leave the enemy cast active.
+        _,_,spell,target=string.find(text,"^Your (.-) misses (0x[%x]+)%.")
+        if not spell then _,_,spell,target=string.find(text,"^Your (.-) was dodged by (0x[%x]+)%.") end
+        if not spell then _,_,spell,target=string.find(text,"^Your (.-) was parried by (0x[%x]+)%.") end
+        if not spell then _,_,spell,target=string.find(text,"^Your (.-) was resisted by (0x[%x]+)%.") end
+        if not spell then _,_,spell,target=string.find(text,"^Your (.-) is resisted by (0x[%x]+)%.") end
+        if spell and target then
+            local pg=safeUnitGUID("player") or D.selfKey
             local si=D.guidToActor[pg]
-            if si then tryRecordInterrupt(si,spell,target); return true end
+            if D.threatOnSpellFailed then D.threatOnSpellFailed(pg,target,spell) end
+            clearRecentAuraCast(target,spell)
+            if si then return true end
+        end
+
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) misses (0x[%x]+)%.")
+        if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was dodged by (0x[%x]+)%.") end
+        if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was parried by (0x[%x]+)%.") end
+        if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) was resisted by (0x[%x]+)%.") end
+        if not source then _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) is resisted by (0x[%x]+)%.") end
+        if source and spell and target then
+            local si=actorFromSourceToken(source)
+            if si then
+                if D.threatOnSpellFailed then D.threatOnSpellFailed(source,target,spell) end
+                clearRecentAuraCast(target,spell)
+                return true
+            end
+            if ignoreOutsideRoster(source) then return true end
         end
     end
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+)%.")
-    if source and spell then
-        local si=actorFromSourceToken(source)
-        if si then
-            if D.threatOnSpellLanded then D.threatOnSpellLanded(source,target,spell) end
-            if INTERRUPT_SPELLS[spell] then tryRecordInterrupt(si,spell,target); return true end
-        elseif ignoreOutsideRoster(source) then return true end
-    end
-    -- Interrupts: GUID's Kick interrupts GUID's Spell.
-    _,_,source,spell,target,removed=string.find(text,"^(0x[%x]+)'s (.-) interrupts (0x[%x]+)'s (.-)%.")
-    if source then local si=actorFromSourceToken(source); if si then return D.recordInterrupt(si,spell,target,removed) end; if ignoreOutsideRoster(source) then return true end end
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) interrupts (0x[%x]+)%.")
-    if source then local si=actorFromSourceToken(source); if si then return D.recordInterrupt(si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
 
-    -- RavenCraft self-dispel form observed live:
-    -- CHAT_MSG_SPELL_BREAK_AURA | Your Decayed Strength is removed.
-    -- followed immediately by one or more duplicate "You cast Purify." lines.
-    local removedAura
-    _,_,removedAura=string.find(text,"^Your (.-) is removed%.")
-    if removedAura and ev=="CHAT_MSG_SPELL_BREAK_AURA" then
-        local recent=D.recentSelfDispelCast
-        if recent and GetTime()-(recent.time or 0)<=1.0 and DISPEL_SPELLS[recent.spell] then
-            D.recentSelfDispelCast=nil
-            return recordSelfDispel(recent.spell,removedAura)
+    local hasHit=string.find(text," hits ",1,true)
+    if hasHit then
+        -- Non-damaging interrupt abilities such as Counterspell/Spell Lock can
+        -- appear as a plain hit without a numeric damage amount.
+        _,_,spell,target=string.find(text,"^Your (.-) hits (0x[%x]+)%.")
+        if spell and target then
+            local pg=safeUnitGUID("player") or D.selfKey
+            if D.threatOnSpellLanded then D.threatOnSpellLanded(pg,target,spell) end
+            if INTERRUPT_SPELLS[spell] then
+                local si=D.guidToActor[pg]
+                if si then tryRecordInterrupt(si,spell,target); return true end
+            end
         end
-        D.pendingSelfDispel={aura=removedAura,time=GetTime()}
-        return true
-    end
-
-    _,_,spell=string.find(text,"^You cast (.-)%.")
-    if spell=="Feign Death" and D.threatOnFeignSuccess then D.threatOnFeignSuccess(safeUnitGUID("player") or D.selfKey); return true end
-    if spell and DISPEL_SPELLS[spell] then
-        local pending=D.pendingSelfDispel
-        if pending and GetTime()-(pending.time or 0)<=1.0 then
-            D.pendingSelfDispel=nil
-            D.recentSelfDispelCast=nil
-            return recordSelfDispel(spell,pending.aura)
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+)%.")
+        if source and spell then
+            local si=actorFromSourceToken(source)
+            if si then
+                if D.threatOnSpellLanded then D.threatOnSpellLanded(source,target,spell) end
+                if INTERRUPT_SPELLS[spell] then tryRecordInterrupt(si,spell,target); return true end
+            elseif ignoreOutsideRoster(source) then return true end
         end
-        -- Keep a short reverse-order cache as some RavenCraft spell logs can
-        -- arrive before the corresponding BREAK_AURA line.
-        D.recentSelfDispelCast={spell=spell,time=GetTime()}
-        return true
     end
 
-    -- Explicit dispel/remove forms with source.
-    _,_,source,spell,target,removed=string.find(text,"^(0x[%x]+)'s (.-) removes (.-) from (0x[%x]+)%.")
-    if source then local si=actorFromSourceToken(source); if si then return recordUtility("dispels",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) dispels (.-) from (0x[%x]+)%.")
-    if source then local si=actorFromSourceToken(source); if si then return recordUtility("dispels",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
+    if string.find(text," interrupts ",1,true) then
+        -- Interrupts: GUID's Kick interrupts GUID's Spell.
+        _,_,source,spell,target,removed=string.find(text,"^(0x[%x]+)'s (.-) interrupts (0x[%x]+)'s (.-)%.")
+        if source then local si=actorFromSourceToken(source); if si then return D.recordInterrupt(si,spell,target,removed) end; if ignoreOutsideRoster(source) then return true end end
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) interrupts (0x[%x]+)%.")
+        if source then local si=actorFromSourceToken(source); if si then return D.recordInterrupt(si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
+    end
+
+    if ev=="CHAT_MSG_SPELL_BREAK_AURA" and string.find(text," is removed.",1,true) then
+        -- RavenCraft self-dispel form observed live:
+        -- CHAT_MSG_SPELL_BREAK_AURA | Your Decayed Strength is removed.
+        -- followed immediately by one or more duplicate "You cast Purify." lines.
+        local removedAura
+        _,_,removedAura=string.find(text,"^Your (.-) is removed%.")
+        if removedAura then
+            local recent=D.recentSelfDispelCast
+            if recent and GetTime()-(recent.time or 0)<=1.0 and DISPEL_SPELLS[recent.spell] then
+                D.recentSelfDispelCast=nil
+                return recordSelfDispel(recent.spell,removedAura)
+            end
+            D.pendingSelfDispel={aura=removedAura,time=GetTime()}
+            return true
+        end
+    end
+
+    local isSelfCast=string.sub(text,1,9)=="You cast "
+    if isSelfCast then
+        _,_,spell=string.find(text,"^You cast (.-)%.")
+        if spell=="Feign Death" and D.threatOnFeignSuccess then D.threatOnFeignSuccess(safeUnitGUID("player") or D.selfKey); return true end
+        if spell and DISPEL_SPELLS[spell] then
+            local pending=D.pendingSelfDispel
+            if pending and GetTime()-(pending.time or 0)<=1.0 then
+                D.pendingSelfDispel=nil
+                D.recentSelfDispelCast=nil
+                return recordSelfDispel(spell,pending.aura)
+            end
+            -- Keep a short reverse-order cache as some RavenCraft spell logs can
+            -- arrive before the corresponding BREAK_AURA line.
+            D.recentSelfDispelCast={spell=spell,time=GetTime()}
+            return true
+        end
+    end
+
+    if string.find(text," removes ",1,true) or string.find(text," dispels ",1,true) then
+        -- Explicit dispel/remove forms with source.
+        _,_,source,spell,target,removed=string.find(text,"^(0x[%x]+)'s (.-) removes (.-) from (0x[%x]+)%.")
+        if source then local si=actorFromSourceToken(source); if si then return recordUtility("dispels",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) dispels (.-) from (0x[%x]+)%.")
+        if source then local si=actorFromSourceToken(source); if si then return recordUtility("dispels",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
+    end
 
     -- Casts are cached for a few seconds. Vanilla aura-application messages often
     -- omit the caster, so the subsequent 'is afflicted by' line is correlated
     -- back to this source/target/spell tuple.
-    _,_,spell,target=string.find(text,"^You cast (.-) on (0x[%x]+)%.")
-    if spell and target then
-        local pg=safeUnitGUID("player") or D.selfKey
-        -- RC24: RavenCraft emits this explicit RAW line after a successful
-        -- non-damaging cast (confirmed for Distracting Shot).  Use it as the
-        -- success signal for pending flat-threat abilities instead of booking
-        -- threat on UNIT_CASTEVENT alone. Miss/resist paths therefore remain
-        -- able to clear the pending cast without false threat.
-        if D.threatOnSpellLanded then D.threatOnSpellLanded(pg,target,spell) end
-        local si=D.guidToActor[pg]
-        if si then D.rememberAuraOrigin(si.guid or si.key,spell,target); rememberAuraCast(si,spell,target); return true end
+    if isSelfCast then
+        _,_,spell,target=string.find(text,"^You cast (.-) on (0x[%x]+)%.")
+        if spell and target then
+            local pg=safeUnitGUID("player") or D.selfKey
+            -- RC24: RavenCraft emits this explicit RAW line after a successful
+            -- non-damaging cast (confirmed for Distracting Shot).  Use it as the
+            -- success signal for pending flat-threat abilities instead of booking
+            -- threat on UNIT_CASTEVENT alone. Miss/resist paths therefore remain
+            -- able to clear the pending cast without false threat.
+            if D.threatOnSpellLanded then D.threatOnSpellLanded(pg,target,spell) end
+            local si=D.guidToActor[pg]
+            if si then D.rememberAuraOrigin(si.guid or si.key,spell,target); rememberAuraCast(si,spell,target); return true end
+        end
     end
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+) casts (.-) on (0x[%x]+)%.")
-    if source then
-        D.rememberAuraOrigin(source,spell,target)
-        local si=actorFromSourceToken(source)
-        if si then if D.threatOnSpellLanded then D.threatOnSpellLanded(source,target,spell) end; rememberAuraCast(si,spell,target); return true end
-        if ignoreOutsideRoster(source) then return true end
+
+    if string.find(text," casts ",1,true) then
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+) casts (.-) on (0x[%x]+)%.")
+        if source then
+            D.rememberAuraOrigin(source,spell,target)
+            local si=actorFromSourceToken(source)
+            if si then if D.threatOnSpellLanded then D.threatOnSpellLanded(source,target,spell) end; rememberAuraCast(si,spell,target); return true end
+            if ignoreOutsideRoster(source) then return true end
+        end
     end
-    _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+)%.")
-    if source and CC_SPELLS[spell] then
-        local si=actorFromSourceToken(source)
-        if si then rememberAuraCast(si,spell,target); return true end
-        if ignoreOutsideRoster(source) then return true end
+    if hasHit then
+        _,_,source,spell,target=string.find(text,"^(0x[%x]+)'s (.-) hits (0x[%x]+)%.")
+        if source and CC_SPELLS[spell] then
+            local si=actorFromSourceToken(source)
+            if si then rememberAuraCast(si,spell,target); return true end
+            if ignoreOutsideRoster(source) then return true end
+        end
     end
 
     -- Helpful aura gained by a roster member. RavenCraft uses *_BUFFS (plural)
     -- for lines such as "You gain Blessing of Might.". Only parse "gain" as a
     -- buff when the RAW subtype itself is a buff event, so XP gain cannot leak
     -- into Buff Uptime.
-    if ev and string.find(ev,"_BUFF",1,true) then
+    if ev and string.find(ev,"_BUFF",1,true) and string.find(text," gain",1,true) then
         _,_,target,spell=string.find(text,"^(0x[%x]+) gains (.-)%.")
         if target and spell then
             -- Periodic heal/resource ticks can arrive on *_BUFFS events too, e.g.
             -- "GUID gains 38 health from GUID's Renew."  They are healing/resource
             -- combat-log lines, not aura applications.  Never seed them as Buff Uptime.
-            if string.find(spell,"^[0-9]+ health from ")
-                or string.find(spell,"^[0-9]+ Health from ")
-                or string.find(spell,"^[0-9]+ Mana from ")
-                or string.find(spell,"^[0-9]+ mana from ")
-                or string.find(spell,"^[0-9]+ Rage from ")
-                or string.find(spell,"^[0-9]+ rage from ")
-                or string.find(spell,"^[0-9]+ Energy from ")
-                or string.find(spell,"^[0-9]+ energy from ") then
+            if D.isRawResourceGain(spell) then
                 -- This is not an aura application, but it can carry the caster
                 -- that the actual aura-gain line omitted.  Use it to backfill
                 -- the already existing Buff Uptime entry before discarding it
@@ -2605,10 +2679,7 @@ local function parseUtility(ev,text)
         _,_,spell=string.find(text,"^You gain (.-)%.")
         if spell then
             -- Resource gains are not buffs.
-            if string.find(spell,"^[0-9]+ health from ") or string.find(spell,"^[0-9]+ Health from ")
-                or string.find(spell,"^[0-9]+ Mana from ") or string.find(spell,"^[0-9]+ mana from ")
-                or string.find(spell,"^[0-9]+ Rage from ") or string.find(spell,"^[0-9]+ rage from ")
-                or string.find(spell,"^[0-9]+ Energy from ") or string.find(spell,"^[0-9]+ energy from ") then
+            if D.isRawResourceGain(spell) then
                 -- Same backfill for the self-target wording: "You gain ...".
                 local _,_,gainSource,gainSpell=string.find(spell,"^[0-9]+ [^ ]+ from (0x[%x]+)'s (.-)$")
                 if gainSource and gainSpell then
@@ -2642,116 +2713,149 @@ local function parseUtility(ev,text)
         end
     end
 
-    -- Harmful aura applied. Always track it as Received when the target is in
-    -- our roster, and as Cast when a recent source can be correlated.
-    _,_,target,spell=string.find(text,"^(0x[%x]+) is afflicted by (.-)%.")
-    if target and spell then
-        if D.threatOnAuraLanded then D.threatOnAuraLanded(target,spell) end
-        local ti=D.guidToActor[target]
-        local si=recentAuraCaster(target,spell); local origin=D.recentAuraOrigin(target,spell)
-        -- Secondary debuffs can have a different name from the cast that caused
-        -- them (Power Word: Shield -> Weakened Soul). If exact spell matching
-        -- found nothing, accept only a very recent roster cast on this same
-        -- target. The narrow window avoids attributing unrelated raid debuffs.
-        if not si and not origin then
-            local direct=D.recentDirectRosterAuraCasts and D.recentDirectRosterAuraCasts[target] or nil
-            if direct then
-                if GetTime()-(direct.time or 0)<=1.25 then si=direct.source
-                else D.recentDirectRosterAuraCasts[target]=nil end
-            end
-        end
-        if ti then
-            local ta=utilityActor(ti)
-            if si then startAura(ta.debuffsReceived,spell,target,si.name,si.guid or si.key)
-            elseif origin then startAura(ta.debuffsReceived,spell,target,origin.name,origin.key)
-            else startAura(ta.debuffsReceived,spell,target) end
-        end
-        if si then
-            -- A landed hostile CC is itself enough to open the encounter.
-            -- This is especially important for Sap: RavenCraft may not put the
-            -- player into normal combat until the later breaking hit.
-            if CC_SPELLS[spell] and (not D.inCombat or D.startTime==0) then
-                if not ensureStarted() then return false end
-            end
-            local sa=utilityActor(si); startAura(sa.debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=sa.key
-            clearRecentAuraCast(target,spell)
-            if CC_SPELLS[spell] then
-                addCount(sa.cc,spell,1)
-                D.activeCC[target]={spell=spell,sourceKey=sa.key,time=GetTime()}
-                D.logLine("cc","CC landed "..tostring(spell).." on "..tostring(target).." by "..tostring(sa.name))
-                D.lastCCLanded=spell.." | "..target.." | "..sa.name
-                D.lastCCSegmentOpen="inCombat="..tostring(D.inCombat).." | start="..tostring(D.startTime)
-            end
-        end
-        if not ti and not si then addCount(D.globalUtility.debuffsReceived,spell,1) end
-        D.lastUtility=(si and si.name or "Unknown").." debuff "..spell
-        return true
-    end
-    _,_,spell=string.find(text,"^You are afflicted by (.-)%.")
-    if spell then local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then local a=utilityActor(si); startAura(a.debuffsReceived,spell,a.guid or a.key) end; if CC_SPELLS[spell] then addCount(D.globalUtility.cc,spell,1) end; return true end
-
-    -- Aura fades. Close both the target-side timer and the source-side Debuffs
-    -- Cast timer when we know who applied it.
-    _,_,spell,target=string.find(text,"^(.-) fades from (0x[%x]+)%.")
-    if spell and target then
-        local ti=D.guidToActor[target]
-        if ti then D.activeRosterBuffs[target.."|"..spell]=nil; local ta=utilityActor(ti); stopAura(ta.buffs,spell,target); stopAura(ta.debuffsReceived,spell,target) end
-        local sourceKey=D.activeAuraSources[target.."|"..spell]
-        if sourceKey and D.actors[sourceKey] then stopAura(D.actors[sourceKey].debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=nil end
-        if CC_SPELLS[spell] then
-            local active=D.activeCC[target]
-            local hit=D.ccDamageByTarget[target]
-            local breakSource=nil
-            local breakAbility="Melee"
-            local breakAmount=0
-            local breakTime=0
-            if active and active.breakSource then
-                breakSource=active.breakSource
-                breakAbility=active.breakAbility or "Melee"
-                breakAmount=active.breakAmount or 0
-                breakTime=active.breakTime or 0
-            elseif hit then
-                breakSource=hit.source
-                breakAbility=hit.ability or "Melee"
-                breakAmount=hit.amount or 0
-                breakTime=hit.time or 0
-            end
-            if active and active.spell==spell and ev=="CHAT_MSG_SPELL_BREAK_AURA" and breakSource and GetTime()-breakTime<=2.00 then
-                local breaker=utilityActor(breakSource)
-                if breaker then
-                    addCount(breaker.ccBreaks,spell,1)
-                    if not breaker.ccBreakAbilities then breaker.ccBreakAbilities={} end
-                    local breakEntry=addCount(breaker.ccBreakAbilities,spell.." | "..breakAbility,1)
-                    breakEntry.damage=(breakEntry.damage or 0)+breakAmount
-                    D.lastUtility=breaker.name.." ccBreaks "..spell.." with "..breakAbility.." for "..tostring(breakAmount)
-                    D.lastCCBreak=breaker.name.." | "..spell.." | "..breakAbility.." | "..tostring(breakAmount).." | "..target
-                else
-                    addCount(D.globalUtility.ccBreaks,spell,1)
-                    D.lastCCBreak="Global | "..spell.." | "..breakAbility.." | "..target
+    if string.find(text," afflicted by ",1,true) then
+        -- Harmful aura applied. Always track it as Received when the target is in
+        -- our roster, and as Cast when a recent source can be correlated.
+        _,_,target,spell=string.find(text,"^(0x[%x]+) is afflicted by (.-)%.")
+        if target and spell then
+            if D.threatOnAuraLanded then D.threatOnAuraLanded(target,spell) end
+            local ti=D.guidToActor[target]
+            local si=recentAuraCaster(target,spell); local origin=D.recentAuraOrigin(target,spell)
+            -- Secondary debuffs can have a different name from the cast that caused
+            -- them (Power Word: Shield -> Weakened Soul). If exact spell matching
+            -- found nothing, accept only a very recent roster cast on this same
+            -- target. The narrow window avoids attributing unrelated raid debuffs.
+            if not si and not origin then
+                local direct=D.recentDirectRosterAuraCasts and D.recentDirectRosterAuraCasts[target] or nil
+                if direct then
+                    if GetTime()-(direct.time or 0)<=1.25 then si=direct.source
+                    else D.recentDirectRosterAuraCasts[target]=nil end
                 end
             end
-            D.logLine("cc","CC cleared (fade) "..tostring(spell).." on "..tostring(target))
-            D.activeCC[target]=nil
-            D.ccDamageByTarget[target]=nil
+            if ti then
+                local ta=utilityActor(ti)
+                if si then startAura(ta.debuffsReceived,spell,target,si.name,si.guid or si.key)
+                elseif origin then startAura(ta.debuffsReceived,spell,target,origin.name,origin.key)
+                else startAura(ta.debuffsReceived,spell,target) end
+            end
+            if si then
+                -- A landed hostile CC is itself enough to open the encounter.
+                -- This is especially important for Sap: RavenCraft may not put the
+                -- player into normal combat until the later breaking hit.
+                if CC_SPELLS[spell] and (not D.inCombat or D.startTime==0) then
+                    if not ensureStarted() then return false end
+                end
+                local sa=utilityActor(si); startAura(sa.debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=sa.key
+                clearRecentAuraCast(target,spell)
+                if CC_SPELLS[spell] then
+                    addCount(sa.cc,spell,1)
+                    D.activeCC[target]={spell=spell,sourceKey=sa.key,time=GetTime()}
+                    D.logLine("cc","CC landed "..tostring(spell).." on "..tostring(target).." by "..tostring(sa.name))
+                    D.lastCCLanded=spell.." | "..target.." | "..sa.name
+                    D.lastCCSegmentOpen="inCombat="..tostring(D.inCombat).." | start="..tostring(D.startTime)
+                end
+            end
+            if not ti and not si then addCount(D.globalUtility.debuffsReceived,spell,1) end
+            D.lastUtility=(si and si.name or "Unknown").." debuff "..spell
+            return true
         end
-        return true
+        _,_,spell=string.find(text,"^You are afflicted by (.-)%.")
+        if spell then local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then local a=utilityActor(si); startAura(a.debuffsReceived,spell,a.guid or a.key) end; if CC_SPELLS[spell] then addCount(D.globalUtility.cc,spell,1) end; return true end
     end
-    _,_,spell=string.find(text,"^(.-) fades from you%.")
-    if spell then local _,_,baseSpell=string.find(spell,"^(.-) %([0-9]+%)$"); if baseSpell then spell=baseSpell end; D.activeRosterBuffs["player|"..spell]=nil; local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then local a=utilityActor(si); local tk=a.guid or a.key; D.activeRosterBuffs[tk.."|"..spell]=nil; stopAura(a.buffs,spell,tk); stopAura(a.debuffsReceived,spell,tk) end; if CC_SPELLS[spell] and ev=="CHAT_MSG_SPELL_BREAK_AURA" then addCount(D.globalUtility.ccBreaks,spell,1) end; return true end
+
+    if string.find(text," fades from ",1,true) then
+        -- Aura fades. Close both the target-side timer and the source-side Debuffs
+        -- Cast timer when we know who applied it.
+        _,_,spell,target=string.find(text,"^(.-) fades from (0x[%x]+)%.")
+        if spell and target then
+            local ti=D.guidToActor[target]
+            if ti then D.activeRosterBuffs[target.."|"..spell]=nil; local ta=utilityActor(ti); stopAura(ta.buffs,spell,target); stopAura(ta.debuffsReceived,spell,target) end
+            local sourceKey=D.activeAuraSources[target.."|"..spell]
+            if sourceKey and D.actors[sourceKey] then stopAura(D.actors[sourceKey].debuffsCast,spell,target); D.activeAuraSources[target.."|"..spell]=nil end
+            if CC_SPELLS[spell] then
+                local active=D.activeCC[target]
+                local hit=D.ccDamageByTarget[target]
+                local breakSource=nil
+                local breakAbility="Melee"
+                local breakAmount=0
+                local breakTime=0
+                if active and active.breakSource then
+                    breakSource=active.breakSource
+                    breakAbility=active.breakAbility or "Melee"
+                    breakAmount=active.breakAmount or 0
+                    breakTime=active.breakTime or 0
+                elseif hit then
+                    breakSource=hit.source
+                    breakAbility=hit.ability or "Melee"
+                    breakAmount=hit.amount or 0
+                    breakTime=hit.time or 0
+                end
+                if active and active.spell==spell and ev=="CHAT_MSG_SPELL_BREAK_AURA" and breakSource and GetTime()-breakTime<=2.00 then
+                    local breaker=utilityActor(breakSource)
+                    if breaker then
+                        addCount(breaker.ccBreaks,spell,1)
+                        if not breaker.ccBreakAbilities then breaker.ccBreakAbilities={} end
+                        local breakEntry=addCount(breaker.ccBreakAbilities,spell.." | "..breakAbility,1)
+                        breakEntry.damage=(breakEntry.damage or 0)+breakAmount
+                        D.lastUtility=breaker.name.." ccBreaks "..spell.." with "..breakAbility.." for "..tostring(breakAmount)
+                        D.lastCCBreak=breaker.name.." | "..spell.." | "..breakAbility.." | "..tostring(breakAmount).." | "..target
+                    else
+                        addCount(D.globalUtility.ccBreaks,spell,1)
+                        D.lastCCBreak="Global | "..spell.." | "..breakAbility.." | "..target
+                    end
+                end
+                D.logLine("cc","CC cleared (fade) "..tostring(spell).." on "..tostring(target))
+                D.activeCC[target]=nil
+                D.ccDamageByTarget[target]=nil
+            end
+            return true
+        end
+        _,_,spell=string.find(text,"^(.-) fades from you%.")
+        if spell then local _,_,baseSpell=string.find(spell,"^(.-) %([0-9]+%)$"); if baseSpell then spell=baseSpell end; D.activeRosterBuffs["player|"..spell]=nil; local si=D.guidToActor[safeUnitGUID("player") or D.selfKey]; if si then local a=utilityActor(si); local tk=a.guid or a.key; D.activeRosterBuffs[tk.."|"..spell]=nil; stopAura(a.buffs,spell,tk); stopAura(a.debuffsReceived,spell,tk) end; if CC_SPELLS[spell] and ev=="CHAT_MSG_SPELL_BREAK_AURA" then addCount(D.globalUtility.ccBreaks,spell,1) end; return true end
+    end
 
     if string.find(ev,"AURA",1,true) or string.find(ev,"BUFF",1,true) or string.find(ev,"PERIODIC",1,true) or string.find(ev,"BREAK",1,true) then captureUtilityUnknown(ev,text) end
     return false
 end
 
-local function parseRaw(rawEvent,text)
+-- Event names repeat for thousands of lines. Cache only their parser order,
+-- never message results or actor data; unknown extension events keep the same
+-- fallback. Cap the cache in case an extension generates dynamic event names.
+local parseRaw
+do
+local rawEventRoutes,rawEventRouteCount={},0
+local function rawEventRoute(ev)
+    local route=rawEventRoutes[ev]
+    if route then return route end
+    if string.find(ev,"HEAL",1,true) then route=1
+    elseif string.find(ev,"AURA_GONE",1,true)
+        or string.find(ev,"BREAK_AURA",1,true)
+        or string.find(ev,"_BUFF",1,true) then route=2
+    elseif string.find(ev,"COMBAT_SELF_HITS",1,true)
+        or string.find(ev,"SPELL_SELF_DAMAGE",1,true)
+        or string.find(ev,"COMBAT_PET_HITS",1,true) then route=3
+    elseif string.find(ev,"FRIENDLYPLAYER_HITS",1,true)
+        or string.find(ev,"CREATURE_VS_CREATURE_DAMAGE",1,true)
+        or string.find(ev,"PERIODIC_CREATURE_DAMAGE",1,true) then route=4
+    else route=5 end
+    if rawEventRouteCount<128 then
+        rawEventRoutes[ev]=route
+        rawEventRouteCount=rawEventRouteCount+1
+    end
+    return route
+end
+
+parseRaw=function(rawEvent,text)
+    if not D.parserEnabled() then return end
     if not text then return end
     if D.dpsLogRawGate and D.dpsLogRawGate(rawEvent,text) then return end
     local ev=rawEvent or ""
+    local route=rawEventRoute(ev)
 
     -- Conservative dispatch: only specialize event families whose purpose is
     -- unambiguous. Unknown/custom RavenCraft events still use the exact proven
     -- full parser chain at the bottom.
-    if string.find(ev,"HEAL",1,true) then
+    if route==1 then
         if parseHealing(ev,text) then return end
         if parseUtility(ev,text) then return end
         if parseSelf(ev,text) then return end
@@ -2759,9 +2863,7 @@ local function parseRaw(rawEvent,text)
         return
     end
 
-    if string.find(ev,"AURA_GONE",1,true)
-        or string.find(ev,"BREAK_AURA",1,true)
-        or string.find(ev,"_BUFF",1,true) then
+    if route==2 then
         -- RavenCraft/SuperWoW can deliver HoT/resource healing lines through
         -- *_BUFFS events (for example: GUID gains 38 health from GUID's Rejuvenation).
         -- Healing must get first refusal here.  parseUtility intentionally consumes
@@ -2775,18 +2877,14 @@ local function parseRaw(rawEvent,text)
         return
     end
 
-    if string.find(ev,"COMBAT_SELF_HITS",1,true)
-        or string.find(ev,"SPELL_SELF_DAMAGE",1,true)
-        or string.find(ev,"COMBAT_PET_HITS",1,true) then
+    if route==3 then
         if parseSelf(ev,text) then return end
         if parseGeneric(ev,text) then return end
         if not parseUtility(ev,text) then captureUnknown(ev,text) end
         return
     end
 
-    if string.find(ev,"FRIENDLYPLAYER_HITS",1,true)
-        or string.find(ev,"CREATURE_VS_CREATURE_DAMAGE",1,true)
-        or string.find(ev,"PERIODIC_CREATURE_DAMAGE",1,true) then
+    if route==4 then
         if parseGeneric(ev,text) then return end
         if parseSelf(ev,text) then return end
         if not parseUtility(ev,text) then captureUnknown(ev,text) end
@@ -2800,10 +2898,13 @@ local function parseRaw(rawEvent,text)
     if not parseUtility(ev,text) then captureUnknown(ev,text) end
 end
 
+end -- private dispatch cache scope (Vanilla limits locals per function)
+
 -- Narrow structured-input bridge; utility/death/RAW threat confirmation remain
 -- on their existing paths. Only damage and healing have one exclusive producer.
 D.parseRawReplay=parseRaw
 D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,spellId)
+    if not D.parserEnabled() then return false end
     if D.localPlayerDead and not D.inCombat then return false end
     if not info or not ensureStarted() then return false end
     D.threatEventTarget=nil
@@ -5192,7 +5293,7 @@ local function finalizeAuraTimers(stopTime)
     end
 end
 
-local function finalizePendingCombatEnd()
+local function finalizePendingCombatEnd(force)
     if not D.pendingCombatEndAt or D.pendingCombatEndAt<=0 then return end
     if GetTime()<D.pendingCombatEndAt then return end
 
@@ -5204,7 +5305,7 @@ local function finalizePendingCombatEnd()
     -- is exempt (the player is dead and still wants the group's final numbers).
     local hardCapHit=(GetTime()-D.pendingCombatEndFirstAt) > ((D.combatEndGrace or 1.5)+(D.combatEndHardCap or 4.0))
 
-    if D.localPlayerDead and D.deadSyncLastReceived and D.deadSyncLastReceived>0
+    if not force and D.localPlayerDead and D.deadSyncLastReceived and D.deadSyncLastReceived>0
         and GetTime()-D.deadSyncLastReceived<2.25 then
         D.pendingCombatEndAt=GetTime()+0.75
         D.logLine("end","finalize DEFER dead-sync recent ("..string.format("%.2f",GetTime()-D.deadSyncLastReceived).."s) -> +0.75")
@@ -5230,7 +5331,7 @@ local function finalizePendingCombatEnd()
             if D.ccDamageByTarget then D.ccDamageByTarget[ccTarget]=nil end
         end
     end
-    if ccActive and not hardCapHit then
+    if ccActive and not hardCapHit and not force then
         D.pendingCombatEndAt=GetTime()+0.50
         D.logLine("end","finalize DEFER activeCC not empty -> +0.50")
         return
@@ -5261,6 +5362,34 @@ local function finalizePendingCombatEnd()
 end
 
 -- Events -------------------------------------------------------------------
+function D.setParserEnabled(enabled)
+    enabled=enabled and true or false
+    if D.parserEnabled()==enabled then return end
+    if not enabled and D.startTime>0 then
+        D.pendingCombatEndStopTime=GetTime(); D.pendingCombatEndAt=GetTime()
+        finalizePendingCombatEnd(true)
+    end
+    if not enabled and D.threatCalEnabled and D.threatCalSession then
+        D.threatCalSession.endedAt=D.threatCalStamp()
+        D.threatCalSession.stopReason="parser paused"
+    end
+    CawDPSMeterCharDB=CawDPSMeterCharDB or {}
+    CawDPSMeterCharDB.parserEnabled=enabled
+    if not enabled then D.inCombat=false end
+    D.cancelCombatSync()
+    D.dpsLogQueue={}; D.dpsLogProbeAt=nil
+    D.pendingCombatEndAt=0; D.pendingCombatEndStopTime=0; D.pendingCombatEndFirstAt=0
+    D.localPlayerDead=false; D.deadSyncLastReceived=0; D.deadSyncNextRequest=0
+    D.activeRosterBuffs={}; D.activeEnemyCasts={}; D.activeCC={}; D.ccDamageByTarget={}
+    D.pendingSelfTotem=nil; D.pendingItemSummons={}
+    if enabled then
+        D.lastFinalizeAt=0
+        refreshRoster()
+        if D.threatCalEnabled and D.threatCalNewSession then D.threatCalNewSession()
+        elseif CawDPSMeterCharDB.threatCalAutoStart and D.threatCalStart then D.threatCalStart() end
+    end
+    if D.uiRefreshMeters then D.uiRefreshMeters() else updateUI() end
+end
 local events=CreateFrame("Frame","CawDPSMeterEvents",UIParent); D.events=events
 
 -- RC29: RavenCraft Threat API v4 normal-mob capability probe/sniffer.
@@ -5362,7 +5491,12 @@ events:SetScript("OnUpdate",function()
     if D.talentSyncTick then D.talentSyncTick(sendSyncNow,syncChannel()) end
     if D.talentViewTick then D.talentViewTick(sendSyncNow,syncChannel()) end
     if D.threatSyncTick then D.threatSyncTick(sendSyncNow,syncChannel()) end
-    if D.inCombat and not D.syncRequested and D.syncEnemySet and D.syncEnemySet()~="" then requestCombatSync() end
+    if not D.parserEnabled() then return end
+    if D.inCombat and not D.syncRequested and D.combatSyncEnabled() and syncChannel()
+        and GetTime()>=(D.nextCombatSyncCheck or 0) then
+        D.nextCombatSyncCheck=GetTime()+0.25
+        requestCombatSync()
+    end
     if D.threatPrunePending and GetTime()>=(D.nextThreatPrune or 0) then D.nextThreatPrune=GetTime()+1; D.threatPrunePending() end
     if D.threatApiProbeEnabled and GetTime()>=(D.threatApiNextRequest or 0) then
         D.threatApiNextRequest=GetTime()+0.50
@@ -5442,6 +5576,7 @@ local function reg(ev) local ok=pcall(events.RegisterEvent,events,ev); if ev=="R
 reg("ADDON_LOADED"); reg("RAW_COMBATLOG"); reg("UNIT_CASTEVENT"); reg("CHAT_MSG_ADDON"); reg("CHAT_MSG_COMBAT_FRIENDLY_DEATH"); reg("PLAYER_REGEN_DISABLED"); reg("PLAYER_REGEN_ENABLED"); reg("PLAYER_ENTERING_WORLD"); reg("PARTY_MEMBERS_CHANGED"); reg("RAID_ROSTER_UPDATE"); reg("UNIT_PET"); reg("UNIT_INVENTORY_CHANGED"); reg("PLAYER_AURAS_CHANGED"); reg("PLAYER_LOGOUT")
 refreshRoster()
 events:SetScript("OnEvent",function()
+    if D.parserEvents[event] and not D.parserEnabled() then return end
     if event=="ADDON_LOADED" then
         if arg1=="CawDPSMeter" or arg1==nil then initializeSavedVariables() end
     elseif event=="UNIT_INVENTORY_CHANGED" then
@@ -5589,13 +5724,7 @@ events:SetScript("OnEvent",function()
         if arg1 and arg2 and string.find(arg1,"_BUFF",1,true) then
             local _,_,preBuff=string.find(arg2,"^You gain (.-)%.")
             if preBuff then
-                if not string.find(preBuff,"^[0-9]+ Mana from ")
-                    and not string.find(string.lower(preBuff),"^[0-9]+ health from ")
-                    and not string.find(string.lower(preBuff),"^[0-9]+ mana from ")
-                    and not string.find(string.lower(preBuff),"^[0-9]+ rage from ")
-                    and not string.find(string.lower(preBuff),"^[0-9]+ energy from ")
-                    and not string.find(preBuff,"^[0-9]+ Rage from ")
-                    and not string.find(preBuff,"^[0-9]+ Energy from ") then
+                if not D.isRawResourceGain(string.lower(preBuff)) then
                     local _,_,baseBuff=string.find(preBuff,"^(.-) %([0-9]+%)$")
                     if baseBuff then preBuff=baseBuff end
                     D.activeRosterBuffs["player|"..preBuff]={target="player",spell=preBuff}

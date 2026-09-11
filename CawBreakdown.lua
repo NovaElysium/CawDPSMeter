@@ -94,6 +94,24 @@ local spellIconFallbacks=D.spellIconFallbacks or {}
 local spellIdFallbacks=D.spellIdFallbacks or {}
 local spellIconCache={}
 local questionIcon="Interface\\Icons\\INV_Misc_QuestionMark"
+-- Session-only tally of names that fell back to the question-mark icon, so the
+-- bundled Babble-Spell/ID database can be extended with real gaps instead of
+-- guessing. Not a SavedVariable: it is small and reset every login on purpose.
+local missingIconCap=60
+local function recordMissingIcon(name,spellId)
+    if type(name)~="string" or name=="" or name=="Melee" then return end
+    D.missingSpellIcons=D.missingSpellIcons or {}
+    local m=D.missingSpellIcons
+    local existing=m[name]
+    if existing then
+        existing.count=(existing.count or 1)+1
+        if spellId and not existing.spellId then existing.spellId=spellId end
+        return
+    end
+    local n=0; local k; for k in pairs(m) do n=n+1 end
+    if n>=missingIconCap then return end
+    m[name]={count=1,spellId=spellId}
+end
 local function normalizeSpellIcon(icon)
     if type(icon)~="string" or icon=="" or icon=="Temp" then return nil end
     if string.sub(icon,1,10)=="Interface\\" then return icon end
@@ -182,6 +200,7 @@ local function spellIcon(name,spellId)
     if liveIcon then return rememberSpellIcon(name,liveIcon) end
     local icon=spellIconLookup(name)
     icon=rememberSpellIcon(name,icon)
+    if not icon then recordMissingIcon(name,id) end
     return icon or questionIcon
 end
 D.spellIcon=spellIcon

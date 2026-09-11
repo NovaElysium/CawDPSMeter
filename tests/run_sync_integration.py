@@ -9,9 +9,11 @@ ROOT=Path(__file__).resolve().parents[1]
 ADDON=Path(os.environ.get('CAW_TEST_ADDON_ROOT',ROOT))
 wire=[]
 sent=[]
-def client(name,guid,cls,other,otherguid,otherclass):
+def client(name,guid,cls,other,otherguid,otherclass,saved=None):
     vm=LuaRuntime(unpack_returned_tuples=True)
     vm.execute((ROOT/'tests/mock_wow.lua').read_text(encoding='utf-8'))
+    if saved:
+        vm.execute('CawDPSMeterCharDB={'+saved+'}')
     vm.execute(f'''
     UNITS.player={{name="{name}",guid="{guid}",class="{cls}"}}
     UNITS.party1={{name="{other}",guid="{otherguid}",class="{otherclass}"}}
@@ -133,3 +135,163 @@ before=len(sent)
 for i in range(8): tick(118+i)
 assert len(sent)==before
 print('PASS leaving the group clears profiles and stops broadcasts; all packets fit 255 bytes')
+
+# Exercise the complete combat request -> offer -> selection -> snapshot path.
+# Injecting H/A/D/E/Z directly cannot catch a dispatch collision at selection.
+def combat_sync(extra_windows=False, raid=False):
+    global a,b,clients
+    wire.clear(); sent.clear()
+    a=client('Alpha','0xA','DRUID','Bravo','0xB','WARRIOR')
+    b=client('Bravo','0xB','WARRIOR','Alpha','0xA','DRUID')
+    clients={'Alpha':a,'Bravo':b}
+    for vm,own,other,start in [(a,'0xA1','0xB1',190),(b,'0xB1','0xA1',195)]:
+        vm.execute(f'''
+        NOW=200; PLAYER_COMBAT=true
+        UNITS.pet={{guid='{own}',name='Pet',class='WARRIOR'}}
+        UNITS.partypet1={{guid='{other}',name='Other pet',class='WARRIOR'}}
+        fire(CAW_DPS_METER.events,'UNIT_PET','player')
+        local d=CAW_DPS_METER
+        d.inCombat=true; d.startTime={start}; d.syncRequested=true
+        d.threatCalEnabled=false
+        ''')
+        if raid:
+            vm.execute('GetNumRaidMembers=function() return 2 end; UNITS.raid1=UNITS.player; UNITS.raid2=UNITS.party1; UNITS.raidpet1=UNITS.pet; UNITS.raidpet2=UNITS.partypet1; PARTY_COUNT=0')
+    if extra_windows:
+        b.execute('''
+        local d=CAW_DPS_METER
+        d.createMultiWindow({mode='healing'})
+        d.createMultiWindow({mode='threat'})
+        d.createMultiWindow({mode='damage',segment='overall'})
+        ''')
+
+    def raw(vm,event,text):
+        vm.globals().fire(vm.globals().CAW_DPS_METER.events,'RAW_COMBATLOG','CHAT_MSG_'+event,text)
+
+    raw(a,'SPELL_SELF_DAMAGE','Your Wrath hits 0xF1 for 900.')
+    raw(a,'SPELL_SELF_BUFF','Your Heal heals 0xB for 300.')
+    raw(a,'SPELL_PET_DAMAGE',"0xA1's Claw hits 0xF1 for 120.")
+    raw(b,'SPELL_PARTY_DAMAGE',"0xA's Wrath hits 0xF1 for 100.")
+    raw(b,'SPELL_PARTY_BUFF',"0xA's Heal heals 0xB for 50.")
+    assert a.eval("CAW_DPS_METER.actors['0xA'].damage")==900
+    assert b.eval("CAW_DPS_METER.actors['0xA'].damage")==100
+    assert a.eval("CAW_DPS_METER.actors['0xA1'].ownerKey")=='0xA'
+    b.execute('CAW_DPS_METER.syncRequested=false')
+    injected=False; completed_at=None
+    for i in range(120):
+        t=200+i*.05
+        tick(t)
+        if b.globals().CAW_DPS_METER.syncIncoming is not None and not injected:
+            assert b.eval("CAW_DPS_METER.actors['0xA'].damage")==100
+            # Hits observed after the snapshot header must survive its merge.
+            raw(a,'SPELL_SELF_DAMAGE','Your Wrath hits 0xF1 for 25.')
+            raw(a,'SPELL_SELF_BUFF','Your Heal heals 0xB for 15.')
+            raw(b,'SPELL_PARTY_DAMAGE',"0xA's Wrath hits 0xF1 for 25.")
+            raw(b,'SPELL_PARTY_BUFF',"0xA's Heal heals 0xB for 15.")
+            injected=True
+        if b.globals().CAW_DPS_METER.syncReceived:
+            completed_at=t
+            break
+        if injected:
+            assert b.eval("CAW_DPS_METER.actors['0xA'].damage")==125, 'partial snapshot applied before its end marker'
+    assert completed_at is not None, 'combat selection did not produce a complete snapshot'
+    assert injected
+    d=b.globals().CAW_DPS_METER
+    assert d.syncReceived==1 and d.syncLastSource=='Alpha'
+    assert d.actors['0xA'].damage==925 and d.actors['0xA'].healing==315
+    assert d.actors['0xA'].spells.Wrath.damage==925
+    assert d.actors['0xA'].healSpells.Heal.healing==315
+    assert d.actors['0xA1'].damage==120 and d.actors['0xA1'].ownerKey=='0xA' and d.actors['0xA1'].isPet
+    assert d.startTime<195
+    assert d.threatSyncPeers['0xA'] is not None, 'combat selection swallowed a peer announcement'
+    assert d.talentProfiles['0xA'].available, 'talent sync broke during combat transfer'
+    trace=list(sent)
+    assert len([msg for _,msg,_ in trace if msg.startswith('R~')])==1
+    assert len([msg for _,msg,_ in trace if msg.startswith('P~') and not msg.startswith('P~1~')])==1
+    for kind in ['H','A','D','E','Z']:
+        assert any(msg.startswith(kind+'~') for _,msg,_ in trace), kind
+    channel='RAID' if raid else 'PARTY'
+    assert all(ch==channel for _,_,ch in trace)
+
+    # A duplicate complete snapshot must not be applied twice.
+    complete=[(who,msg,ch) for who,msg,ch in trace if who=='Alpha' and msg.startswith('Z~')]
+    for who,msg,ch in complete:
+        b.globals().fire(d.events,'CHAT_MSG_ADDON',d.syncPrefix,msg,ch,who)
+    assert d.syncReceived==1 and d.actors['0xA'].damage==925
+    # A second normal handshake must also leave already complete totals intact.
+    b.execute("SlashCmdList.CAWDPSSYNCDEBUG('retry')")
+    for i in range(120):
+        tick(completed_at+.05+i*.05)
+        if d.syncReceived==2: break
+    assert d.syncReceived==2 and d.actors['0xA'].damage==925 and d.actors['0xA'].healing==315
+    assert d.actors['0xA1'].damage==120
+
+    # The dead client's automatic refresh must traverse the same handshake.
+    raw(a,'SPELL_SELF_DAMAGE','Your Wrath hits 0xF1 for 75.')
+    b.execute('CAW_DPS_METER.localPlayerDead=true; CAW_DPS_METER.deadSyncLastReceived=GetTime(); CAW_DPS_METER.deadSyncNextRequest=GetTime()')
+    dead_at=b.globals().NOW
+    requests_before=len([msg for _,msg,_ in sent if msg.startswith('R~')])
+    for i in range(160):
+        tick(dead_at+.05+i*.05)
+        if d.syncReceived==3: break
+    assert d.syncReceived==3 and d.actors['0xA'].damage==1000
+    assert d.deadSyncLastReceived>dead_at
+    assert len([msg for _,msg,_ in sent if msg.startswith('R~')])==requests_before+1
+
+    # Combat-end reconciliation is automatic too, not just /cdsync retry.
+    raw(a,'SPELL_SELF_DAMAGE','Your Wrath hits 0xF1 for 40.')
+    b.execute("CAW_DPS_METER.localPlayerDead=false; PLAYER_COMBAT=false; fire(CAW_DPS_METER.events,'PLAYER_REGEN_ENABLED')")
+    end_at=b.globals().NOW
+    for i in range(120):
+        tick(end_at+.05+i*.05)
+        if d.syncReceived==4: break
+    assert d.syncReceived==4 and d.actors['0xA'].damage==1040
+    return trace
+
+single=combat_sync()
+print('PASS complete hidden-client combat handshake restores damage, healing and owned pet data while preserving newer local events')
+print('PASS peer/talent sync coexists with combat selection; snapshots apply atomically and retries do not duplicate totals')
+print('PASS a dead client automatically receives the surviving player\'s new damage with one refresh request')
+print('PASS combat-end reconciliation requests and merges the final damage snapshot')
+multiple=combat_sync(extra_windows=True)
+assert single==multiple, 'additional meter windows changed the sync traffic'
+print('PASS four meter windows produce the same sync messages as one hidden meter')
+combat_sync(raid=True)
+print('PASS complete combat handshake also works on RAID')
+
+# Both switches must gate real traffic, including a half-received snapshot.
+for setting in ('parserEnabled','combatSyncEnabled'):
+    wire.clear(); sent.clear()
+    a=client('Alpha','0xA','DRUID','Bravo','0xB','WARRIOR')
+    b=client('Bravo','0xB','WARRIOR','Alpha','0xA','DRUID',setting+'=false')
+    clients={'Alpha':a,'Bravo':b}
+    for vm in clients.values():
+        vm.execute('NOW=300; PLAYER_COMBAT=true; fire(CAW_DPS_METER.events,"PLAYER_REGEN_DISABLED")')
+        vm.execute('fire(CAW_DPS_METER.events,"RAW_COMBATLOG","CHAT_MSG_COMBAT_SELF_HITS","You hit 0xF1 for 100.")')
+    for i in range(30): tick(300+i*.1)
+    def combat_packets():
+        return [msg for sender,msg,_ in sent if sender=='Bravo'
+                and (msg[0] in 'ROHADEZ' or (msg.startswith('P~') and not msg.startswith('P~1~')))]
+    assert not combat_packets(), 'disabled client sent combat packets'
+    d=b.globals().CAW_DPS_METER
+    assert d.talentProfiles['0xA'].available, 'talent sharing stopped with combat recording'
+    if setting=='parserEnabled':
+        assert not d.inCombat and b.eval('next(CAW_DPS_METER.actors)==nil')
+        assert not d.threatCalEnabled, 'saved parser pause restarted calibration at world entry'
+        b.execute('CAW_DPS_METER.setParserEnabled(true)')
+    else:
+        assert d.actors['0xB'].damage==100, 'sync off stopped local damage'
+        b.execute('CAW_DPS_METER.setCombatSyncEnabled(true)')
+    print('PASS saved '+setting+'=false blocks combat traffic after load while retaining talent sharing')
+    b.execute('fire(CAW_DPS_METER.events,"RAW_COMBATLOG","CHAT_MSG_COMBAT_SELF_HITS","You hit 0xF1 for 25.")')
+    paused=False
+    for i in range(60):
+        tick(304+i*.05)
+        if d.syncIncoming is not None and not paused:
+            setter='setParserEnabled' if setting=='parserEnabled' else 'setCombatSyncEnabled'
+            b.execute('CAW_DPS_METER.'+setter+'(false)')
+            paused=True
+    assert paused, 'fixture did not reach an incoming header'
+    assert d.syncIncoming is None and d.syncReceived==0
+    assert d.actors['0xA'] is None, 'disabled receiver accepted a partial or late snapshot'
+    assert not d.syncNonce and len(d.syncQueue)==0
+    print('PASS '+setting+' can stop an in-flight snapshot without applying partial or late data')

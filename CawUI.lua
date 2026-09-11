@@ -328,6 +328,13 @@ function D.uiStyleMeterMenu(v,menu,kind)
         end
     end
     D.uiThemeMeterButton(menu.up,v); D.uiThemeMeterButton(menu.down,v)
+    -- New history entries can create buttons after the window was layered.
+    -- Refresh this popup when it is styled/opened instead of rebuilding every
+    -- window's complete frame tree on each docking poll.
+    if D.pfDockLayerTree and v and v.frame then
+        local f=v.frame
+        D.pfDockLayerTree(menu,60,"DIALOG",f.cawDockedLayer,f:GetFrameStrata()=="BACKGROUND")
+    end
 end
 function D.uiStopMeterDrag(handle)
     if not handle or not handle.cawDragging then return end
@@ -447,8 +454,9 @@ function D.uiLayoutMeterFooter(v)
 end
 function D.uiUpdateMeterFooter(v)
     if not v then return end
-    v.footerText=v.summary:GetText() or ""
     local current=v.id==1 and D or v
+    if not D.parserEnabled() and current.mode~="threat" then v.summary:SetText("Parser paused") end
+    v.footerText=v.summary:GetText() or ""
     v.modeButton.cawMenuLabel=menuLabels[current.mode]; v.modeButton.cawMenuClipped=true
     v.segmentButton.cawMenuLabel=v.id==1 and D.reportSegmentName() or D.multiReportSegmentName(v)
     v.segmentButton.cawMenuClipped=true
@@ -618,6 +626,8 @@ local controls={
     {"Text","classNames","Use class colours for names",0,"bool"},{"Text","rate","Show DPS / HPS",0,"bool"},
     {"Text","percent","Show percentages",0,"bool"},{"General","autoCurrent","Switch to Current when combat starts",0,"bool"},
     {"General","hover","Show tooltips on player bars",0,"bool"},{"Window","locked","Lock window",0,"lock"},
+    {"General","parserEnabled","Enable combat parser",0,"parser"},
+    {"General","combatSyncEnabled","Sync damage and healing",0,"combatSync"},
     {"pfUI","docked","Dock to the right chat panel",0,"dock"},{"pfUI","alternate","Show meters when chat is hidden",0,"alternate"},
     {"pfUI","behindInventory","Keep Caw behind inventory windows",0,"behindInventory"},
     {"Threat","glow","Screen glow",0,"alertBool"},{"Threat","sound","Warning sound",0,"alertBool"},
@@ -639,6 +649,8 @@ local function optionValue(p,c)
     if kind=="dock" then if v then return v.pfDock else return CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockMain end end
     if kind=="alternate" then return CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockAlternate end
     if kind=="behindInventory" then return CawDPSMeterCharDB and CawDPSMeterCharDB.bagLayerAlwaysBehind end
+    if kind=="parser" then return D.parserEnabled() end
+    if kind=="combatSync" then return not CawDPSMeterCharDB or CawDPSMeterCharDB.combatSyncEnabled~=false end
     return D.uiSettings(v)[key]
 end
 local function optionRange(p,c)
@@ -662,6 +674,8 @@ local function setOption(p,c,value)
     if kind=="alertBool" or kind=="alertNumber" then
         D.threatAlertSettings()[key]=value
         D.threatAlertEpisode=nil; D.threatAlertPreviewUntil=nil; D.threatAlertStop()
+    elseif kind=="parser" then D.setParserEnabled(value)
+    elseif kind=="combatSync" then D.setCombatSyncEnabled(value)
     elseif kind=="lock" then D.uiSetLock(v,value)
     elseif kind=="dock" then if (old and true or false)~=value then D.pfDockToggle(v) end
     elseif kind=="alternate" then if (old and true or false)~=value then D.pfDockToggleVisibility() end
@@ -728,6 +742,7 @@ function D.refreshOptions()
         p.preview:Show(); updatePreview(p); p.target:Show(); p.editing:Show(); p.copyButton:Show(); p.threatNote:Hide()
     end
     p.pfNote:SetText(p.page=="pfUI" and "Chat switching applies to all docked windows. Enable the inventory option for bag addons Caw cannot identify automatically." or "")
+    if p.page=="General" then p.recordingNote:Show() else p.recordingNote:Hide() end
 end
 function D.uiConfirmReset(kind)
     if not D.resetDialog then
@@ -761,10 +776,12 @@ function D.openOptions(v)
         end
         local brand=p:CreateTexture(nil,"ARTWORK"); brand:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawBrand.tga")
         brand:SetWidth(132); brand:SetHeight(17); brand:SetPoint("TOPLEFT",p,"TOPLEFT",12,-381); brand:SetAlpha(0.70)
-        D.uiText(p,"1.1.0",60,-410,54,10):SetTextColor(0.48,0.49,0.51)
+        D.uiText(p,D.version,60,-410,54,10):SetTextColor(0.48,0.49,0.51)
         p.heading=D.uiText(p,"",180,-59,580,19)
         p.description=D.uiText(p,"",180,-88,580,12); p.description:SetTextColor(0.58,0.59,0.62)
         p.pfNote=D.uiText(p,"",180,-216,365,12); p.pfNote:SetHeight(65)
+        p.recordingNote=D.uiText(p,"Parser and sync settings apply to all windows on this character.\n\nParser off pauses local recording and combat sync. Existing fights stay available; resuming starts a new segment.\n\nSync off keeps local recording active. Server threat and talent sharing remain available.",180,-282,570,12)
+        p.recordingNote:SetHeight(100); p.recordingNote:SetTextColor(0.68,0.69,0.72)
         p.threatNote=D.uiText(p,"Requires current server threat data for your target. Warnings also work when the meter is hidden.\n\nEnable either effect, then use Test warning to preview it. Sound follows your game volume.",180,-303,570,12)
         p.threatNote:SetHeight(100); p.threatNote:SetTextColor(0.68,0.69,0.72); p.threatNote:Hide()
         p.preview=CreateFrame("Frame",nil,p); p.preview:SetWidth(184); p.preview:SetHeight(160)
@@ -822,10 +839,10 @@ function D.openOptions(v)
         local function action(page,label,x,y,w,fn)
             local b=D.uiButton(p,label,x,y,w,fn); b.page=page; table.insert(p.actions,b); return b
         end
-        action("General","New window",180,-238,174,function()
+        action("General","New window",180,-394,174,function()
             local new=D.createMultiWindow(nil); if new then p.view=new end; D.saveMultiWindows(); D.refreshOptions()
         end)
-        action("General","Show main window",366,-238,174,function() D.window:Show() end)
+        action("General","Show main window",366,-394,174,function() D.window:Show() end)
         p.threatTest=action("Threat","Test warning",584,-145,184,function() D.threatAlertTest() end)
         p.editing=D.uiText(p,"Editing",18,-453,64,12)
         p.target=D.uiListButton(p,78,-449,158,function()

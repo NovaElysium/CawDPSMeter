@@ -122,45 +122,90 @@ end
 -- stale pre-RC36 payload once, then mark the migration complete so a freshly
 -- captured developer log survives later reloads.  Empty calibration sessions
 -- are safe to discard; sessions containing any captured data are preserved.
+-- Keep only the most recent `max` entries of an array-style table, in order.
+local function trimTail(t,max)
+    if not t or not max then return t end
+    local n=table.getn(t)
+    if n<=max then return t end
+    local kept={}
+    local i
+    for i=n-max+1,n do table.insert(kept,t[i]) end
+    return kept
+end
+
 function D.cleanupLegacySavedVariables()
     CawDPSMeterDB=CawDPSMeterDB or {}
-    if (CawDPSMeterDB.savedVariablesCleanupVersion or 0) >= 1 then return end
+    local version=CawDPSMeterDB.savedVariablesCleanupVersion or 0
 
-    local clearedLegacyLog=false
-    local removedEmptyCalibration=0
+    if version<1 then
+        local clearedLegacyLog=false
+        local removedEmptyCalibration=0
 
-    if CawDPSMeterLog~=nil then
-        CawDPSMeterLog=nil
-        clearedLegacyLog=true
-    end
-
-    if CawThreatCalibrationDB and CawThreatCalibrationDB.sessions then
-        local kept={}
-        local i=1
-        while i<=table.getn(CawThreatCalibrationDB.sessions) do
-            local sess=CawThreatCalibrationDB.sessions[i]
-            local hasData=false
-            if sess then
-                if (sess.requests or 0)>0 or (sess.responses or 0)>0 then hasData=true end
-                if sess.events and table.getn(sess.events)>0 then hasData=true end
-                if sess.casts and table.getn(sess.casts)>0 then hasData=true end
-                if sess.snapshots and table.getn(sess.snapshots)>0 then hasData=true end
-            end
-            if hasData then
-                table.insert(kept,sess)
-            else
-                removedEmptyCalibration=removedEmptyCalibration+1
-            end
-            i=i+1
+        if CawDPSMeterLog~=nil then
+            CawDPSMeterLog=nil
+            clearedLegacyLog=true
         end
-        CawThreatCalibrationDB.sessions=kept
+
+        if CawThreatCalibrationDB and CawThreatCalibrationDB.sessions then
+            local kept={}
+            local i=1
+            while i<=table.getn(CawThreatCalibrationDB.sessions) do
+                local sess=CawThreatCalibrationDB.sessions[i]
+                local hasData=false
+                if sess then
+                    if (sess.requests or 0)>0 or (sess.responses or 0)>0 then hasData=true end
+                    if sess.events and table.getn(sess.events)>0 then hasData=true end
+                    if sess.casts and table.getn(sess.casts)>0 then hasData=true end
+                    if sess.snapshots and table.getn(sess.snapshots)>0 then hasData=true end
+                end
+                if hasData then
+                    table.insert(kept,sess)
+                else
+                    removedEmptyCalibration=removedEmptyCalibration+1
+                end
+                i=i+1
+            end
+            CawThreatCalibrationDB.sessions=kept
+        end
+
+        CawDPSMeterDB.savedVariablesCleanupVersion=1
+        CawDPSMeterDB.savedVariablesCleanupAt=D.diagStamp()
+        D.diagLog("INFO","SV_CLEANUP","legacy SavedVariables cleanup",
+            "legacyLog="..(clearedLegacyLog and "cleared" or "none")..
+            " emptyCalibrationSessions="..tostring(removedEmptyCalibration),nil)
+        version=1
     end
 
-    CawDPSMeterDB.savedVariablesCleanupVersion=1
-    CawDPSMeterDB.savedVariablesCleanupAt=D.diagStamp()
-    D.diagLog("INFO","SV_CLEANUP","legacy SavedVariables cleanup",
-        "legacyLog="..(clearedLegacyLog and "cleared" or "none")..
-        " emptyCalibrationSessions="..tostring(removedEmptyCalibration),nil)
+    -- The account-wide file grew to tens of megabytes because the old
+    -- per-session caps (12 sessions x 12k events/6k casts/6k snapshots/2k actor
+    -- contexts) were far too generous once serialized as Lua source text. A
+    -- truncated write of a file that size corrupts every SavedVariables table
+    -- in the same file, including window layout. Trim any history that is
+    -- already on disk down to the new, much smaller caps on next login so
+    -- existing bloated accounts recover without waiting for 12 sessions to
+    -- cycle out naturally.
+    if version<2 then
+        local sessionCap=D.threatCalMaxSessions or 3
+        if CawThreatCalibrationDB and CawThreatCalibrationDB.sessions then
+            local sessions=CawThreatCalibrationDB.sessions
+            while table.getn(sessions)>sessionCap do table.remove(sessions,1) end
+            local i
+            for i=1,table.getn(sessions) do
+                local s=sessions[i]
+                if s then
+                    s.events=trimTail(s.events,D.threatCalMaxEvents or 2000)
+                    s.casts=trimTail(s.casts,D.threatCalMaxCasts or 1500)
+                    s.snapshots=trimTail(s.snapshots,D.threatCalMaxSnapshots or 800)
+                    s.targets=trimTail(s.targets,D.threatCalMaxTargets or 500)
+                    s.requestContexts=trimTail(s.requestContexts,D.threatCalMaxRequestContexts or 500)
+                    s.actorContexts=trimTail(s.actorContexts,D.threatCalMaxActorContexts or 300)
+                end
+            end
+        end
+        CawDPSMeterDB.savedVariablesCleanupVersion=2
+        CawDPSMeterDB.savedVariablesCleanupAt=D.diagStamp()
+        D.diagLog("INFO","SV_CLEANUP_V2","trimmed oversized calibration history to new caps",nil,nil)
+    end
 end
 
 D.diagBootstrapFrame=D.diagBootstrapFrame or CreateFrame("Frame")

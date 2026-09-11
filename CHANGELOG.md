@@ -3,6 +3,58 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.1.2] - 2026-09-11
+
+### Added
+- `/cddebug icons` lists spell names that fell back to the question-mark icon
+  this session (most frequent first, with spell ID when known), to make it
+  possible to report real gaps in the bundled icon database instead of guessing.
+- Settings > General now offers separate combat parser and damage/healing sync
+  switches, saved per character and shared by all windows. Both default to on.
+- Pausing the parser closes and preserves the current segment, freezes local
+  recording and blocks combat snapshots. Resuming starts a new segment at the
+  next combat event. Existing history and Overall remain available.
+- Turning only combat sync off keeps local recording active. Talent sharing
+  and the live server threat display remain available with either switch off.
+
+### Fixed
+- Threat calibration recording could grow the account-wide SavedVariables file
+  to tens of megabytes (12 retained sessions x 12,000 events / 6,000 casts /
+  6,000 snapshots / 2,000 actor contexts each). A file that large risks a
+  truncated write on logout/crash, which corrupts every SavedVariables table
+  sharing that file (including window layout), not only the calibration log.
+  Caps are lowered to 3 sessions x 2,000 events / 1,500 casts / 800 snapshots /
+  300 actor contexts, and a one-time migration trims any oversized history
+  already on disk down to the new caps on next login.
+- Restored damage/healing snapshot exchange: combat-source selection messages
+  no longer get consumed as Caw presence announcements. Existing message formats
+  are retained; presence and talent synchronization continue independently.
+- Meter dropdowns stay above player bars when the inventory background option
+  or Bagshui is active. Newly created encounter entries are layered when opened.
+- Unchanged free windows no longer rebuild their entire frame hierarchy on
+  every docking poll, avoiding repeated foreground/background transitions.
+- The settings panel displays the installed version instead of a fixed 1.1.0 label.
+
+### Changed
+- RAW processing caches event-family dispatch in a bounded table, skips damage
+  and healing patterns when their required text is absent, and reuses the
+  ability captured for CC damage attribution.
+- Aura and utility parsing skips impossible interrupt, dispel, cast and aura
+  patterns using literal guards. Resource ticks use one shared classification
+  instead of repeated searches; existing buff tracking and diagnostics remain intact.
+- Opening buff scans use and cache native spell names when a compatible
+  GetSpellInfo API is available, reducing hidden tooltip work at combat start.
+  Clients without that API retain the existing tooltip fallback.
+- Pending combat sync checks run at most four times per second, only in a group
+  with sync enabled, instead of repeatedly scanning enemy GUIDs every frame.
+- Paused calibration sessions are closed and resumed in a fresh session; live
+  server snapshots are not compared against a paused local model.
+- Added repeatable parser benchmarks and event-by-event comparisons against an
+  unchanged addon checkout, including RAW fallback, DPSLog utility and calibration.
+  See `tests/RAW_PARSER_PERFORMANCE.md` for measurements and their limitations.
+
 ## [1.1.1] - 2026-09-10
 
 ### Added
