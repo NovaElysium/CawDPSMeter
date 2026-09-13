@@ -280,7 +280,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.1.2 release notes](RELEASE_NOTES_1.1.2.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.1.3 release notes](RELEASE_NOTES_1.1.3.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

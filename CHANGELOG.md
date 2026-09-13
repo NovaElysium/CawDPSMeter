@@ -3,7 +3,7 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.3] - 2026-09-13
 
 ### Changed
 - Dispel tracking now uses DPSLog's `SPELL_DISPEL` event when the structured
@@ -29,6 +29,13 @@ and [Semantic Versioning](https://semver.org/).
   includes an overheal amount (confirmed against live RAW_COMBATLOG capture),
   so raw-mode healing totals are not overheal-corrected; this makes that
   visible instead of silently showing a possibly inflated number.
+
+### Documentation
+- README now recommends [DPSLog Community Edition](https://github.com/NovaElysium/DPSLog-Community),
+  a community-maintained fork that fixes the compiler bug and event-delivery
+  issues that made the original (no longer maintained) DPSLog module unusable.
+  Auto-detected at login with an automatic fallback to raw combat-text parsing
+  when it isn't installed — not a hard requirement.
 
 ## [1.1.2] - 2026-09-11
 
