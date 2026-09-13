@@ -166,6 +166,17 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
     if sub=="SPELL_INTERRUPT" and guid(dst) and D.recordInterrupt then
         return D.recordInterrupt(info,spellName(a1,a2),dst,spellName(a4,a5))
     end
+    if sub=="SPELL_DISPEL" and guid(dst) and D.recordUtility then
+        -- a1/a2 (the dispelling ability) are always spellId 0/unknown at the
+        -- source (see WeirdUtils dpslog.zig's dispelDetour) -- DPSLog can't
+        -- see which ability was used, only what got removed. Track dispels
+        -- by the removed aura (a4/a5) instead; RAW tracked them by ability
+        -- name, so this fork's "Dispels" breakdown now reads differently
+        -- (e.g. "Weakened Soul: 3" instead of "Purify: 3") but the count
+        -- itself is at least as accurate, without the old two-line
+        -- self-dispel heuristic's failure modes.
+        return D.recordUtility("dispels",info,spellName(a4,a5),dst)
+    end
     return false -- Remaining utility/casts/deaths retain the existing RAW path.
 end
 local f=CreateFrame("Frame")
@@ -206,8 +217,26 @@ f:SetScript("OnEvent",function()
         if not ok then reject("event API: "..tostring(err)) end
     end
 end)
+-- Polling fallback: native COMBAT_LOG_EVENT_UNFILTERED delivery through the
+-- engine's custom-event table isn't reaching this frame (undocumented struct
+-- layout). DpsLogPopEvent drains the same resolved-event queue by polling.
+local function dpsLogPollOnce()
+    local sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,dstRaid,
+        a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12=DpsLogPopEvent()
+    if sub==nil then return false end
+    D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,dstRaid,
+        a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12)
+    return true
+end
 f:SetScript("OnUpdate",function()
     if not D.parserEnabled() then return end
+    if type(DpsLogPopEvent)=="function" and (D.dpsLogActive or D.dpsLogProbing) then
+        local ok,err=pcall(function()
+            local n=0
+            while n<64 and dpsLogPollOnce() do n=n+1 end
+        end)
+        if not ok then reject("poll API: "..tostring(err)) end
+    end
     if D.dpsLogProbing and D.dpsLogProbeAt and GetTime()-D.dpsLogProbeAt>=0.5 then
         choose(false,"no structured event during RAW probe")
     end
@@ -225,8 +254,8 @@ SlashCmdList.CAWINPUT=function()
         .." | Events: "..D.dpsLogEvents.." | Rejected: "..D.dpsLogRejected)
     if D.dpsLogLastError then DEFAULT_CHAT_FRAME:AddMessage(D.dpsLogLastError) end
     if D.dpsLogFallback then DEFAULT_CHAT_FRAME:AddMessage(D.dpsLogFallback) end
-    if type(GetCombatLogPath)=="function" then
-        local ok,path=pcall(GetCombatLogPath)
-        if ok and path then DEFAULT_CHAT_FRAME:AddMessage("LogSessions reports: "..tostring(path)) end
-    end
+    -- GetCombatLogPath (logsessions.dll) has crashed the client with a native
+    -- ACCESS_VIOLATION on at least one setup. pcall cannot protect against a
+    -- crash inside injected native code, so this call is removed rather than
+    -- guarded; the reported path was cosmetic-only diagnostic output.
 end

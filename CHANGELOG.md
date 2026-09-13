@@ -5,6 +5,31 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Dispel tracking now uses DPSLog's `SPELL_DISPEL` event when the structured
+  API is active, instead of RAW text patterns (including a two-line
+  self-dispel correlation heuristic for RavenCraft's split
+  `CHAT_MSG_SPELL_BREAK_AURA` + `You cast X.` form). DPSLog fires directly
+  from the game's own dispel processing, so this is more reliable and no
+  longer depends on the ability name appearing in chat text at all — but
+  since DPSLog doesn't report which ability was used (only what was
+  removed), the "Dispels" breakdown is now keyed by the dispelled aura's
+  name (e.g. "Weakened Soul") rather than the dispelling ability's name
+  (e.g. "Purify") when running in DPSLog mode. RAW mode is unaffected.
+
+### Fixed
+- `/cawinput` could crash the client with a native ACCESS_VIOLATION by calling
+  `GetCombatLogPath` (logsessions.dll). `pcall` cannot protect against a crash
+  inside injected native code, so the call is removed rather than guarded; it
+  only produced one cosmetic diagnostic line.
+
+### Added
+- Healing footer tooltip now notes when totals come from the raw combat-text
+  parser instead of the structured DPSLog API. Vanilla combat text never
+  includes an overheal amount (confirmed against live RAW_COMBATLOG capture),
+  so raw-mode healing totals are not overheal-corrected; this makes that
+  visible instead of silently showing a possibly inflated number.
+
 ## [1.1.2] - 2026-09-11
 
 ### Added

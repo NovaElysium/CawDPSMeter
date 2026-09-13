@@ -2071,6 +2071,7 @@ local function recordUtility(kind,sourceInfo,spell,targetToken)
     D.lastUtility=(a and a.name or "Global").." "..kind.." "..tostring(spell)..(targetInfo and (" -> "..targetInfo.name) or "")
     return true
 end
+D.recordUtility=recordUtility -- exposed for CawDPSLog.lua's DPSLog-driven dispel path
 
 D.handleUnitCastAuraSource = function(casterGUID,targetGUID,eventType,spellId)
     -- UNIT_CASTEVENT is the only reliable source for many direct, non-ticking
@@ -2558,7 +2559,13 @@ local function parseUtility(ev,text)
         if source then local si=actorFromSourceToken(source); if si then return D.recordInterrupt(si,spell,target) end; if ignoreOutsideRoster(source) then return true end end
     end
 
-    if ev=="CHAT_MSG_SPELL_BREAK_AURA" and string.find(text," is removed.",1,true) then
+    -- DPSLog's SPELL_DISPEL (see CawDPSLog.lua's dpsLogReceive) fires directly
+    -- from the game's own dispel processing, self-dispels included, so it
+    -- doesn't need the two-line BREAK_AURA/cast correlation heuristic below.
+    -- Each dispel-specific branch is individually gated on D.dpsLogActive
+    -- rather than the whole block, since "You cast " here is shared with the
+    -- unrelated Feign Death check.
+    if not D.dpsLogActive and ev=="CHAT_MSG_SPELL_BREAK_AURA" and string.find(text," is removed.",1,true) then
         -- RavenCraft self-dispel form observed live:
         -- CHAT_MSG_SPELL_BREAK_AURA | Your Decayed Strength is removed.
         -- followed immediately by one or more duplicate "You cast Purify." lines.
@@ -2579,7 +2586,7 @@ local function parseUtility(ev,text)
     if isSelfCast then
         _,_,spell=string.find(text,"^You cast (.-)%.")
         if spell=="Feign Death" and D.threatOnFeignSuccess then D.threatOnFeignSuccess(safeUnitGUID("player") or D.selfKey); return true end
-        if spell and DISPEL_SPELLS[spell] then
+        if not D.dpsLogActive and spell and DISPEL_SPELLS[spell] then
             local pending=D.pendingSelfDispel
             if pending and GetTime()-(pending.time or 0)<=1.0 then
                 D.pendingSelfDispel=nil
@@ -2593,7 +2600,7 @@ local function parseUtility(ev,text)
         end
     end
 
-    if string.find(text," removes ",1,true) or string.find(text," dispels ",1,true) then
+    if not D.dpsLogActive and (string.find(text," removes ",1,true) or string.find(text," dispels ",1,true)) then
         -- Explicit dispel/remove forms with source.
         _,_,source,spell,target,removed=string.find(text,"^(0x[%x]+)'s (.-) removes (.-) from (0x[%x]+)%.")
         if source then local si=actorFromSourceToken(source); if si then return recordUtility("dispels",si,spell,target) end; if ignoreOutsideRoster(source) then return true end end

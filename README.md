@@ -76,8 +76,20 @@ state, rather than repeating continuously, and apply to your character across
 all windows. The updated 1.1.1 download includes these controls; existing 1.1.1
 users can replace the files and `/reload`.
 
-The optional DPSLog backend needs a compatible DLL installed separately. Collection
-and talent sync continue independently of the visible UI. See
+The optional DPSLog backend needs a compatible DLL installed separately — we recommend
+**[DPSLog Community Edition](https://github.com/NovaElysium/DPSLog-Community)**, a
+community-maintained continuation of the original (no longer active) DPSLog module.
+It fixes a compiler bug that broke the original build and swaps native event delivery
+for a polling API, so it actually works in-game. With it installed, Caw gets:
+
+- **Overheal-corrected healing** (impossible to derive from raw combat text)
+- **Reliable dispel tracking**, including self-dispels, without text-pattern guessing
+- More accurate damage/healing numbers generally, since they come from structured
+  game data instead of parsed chat lines
+
+Caw auto-detects it at login and falls back to raw combat-text parsing if it isn't
+present — it's a drop-in upgrade, not a hard requirement. Collection and talent sync
+continue independently of the visible UI either way. See
 [1.1.1 release notes](RELEASE_NOTES_1.1.1.md) for available statistics and validation.
 
 If you use a bag addon other than Bagshui, enable **Settings > pfUI > Keep Caw
@@ -117,6 +129,7 @@ option is off by default so Caw remains fully interactive in the normal layout.
 | WoW 1.12 client | RavenCraft / OctoWoW / Vanilla private servers |
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
+| [DPSLog Community Edition](https://github.com/NovaElysium/DPSLog-Community) | *optional* — structured combat data instead of text parsing; see above |
 
 Without SuperWoW loaded the meter will not receive raw combat data.
 
