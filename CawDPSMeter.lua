@@ -5823,10 +5823,25 @@ SlashCmdList["CAWDPSLOG"]=function(msg)
     end
 end
 
+-- /cd hide|show and the bare toggle only ever touched the primary window;
+-- the up to three additional windows (D.multiWindows[2..4]) were left as-is,
+-- so hiding the meter left extra windows sitting on screen. Apply the same
+-- action to every open window instead.
+local function forEachMeterWindow(fn)
+    fn(frame)
+    local i=2
+    while i<=D.multiWindowMax do
+        local v=D.multiWindows[i]
+        if v and not v.closed and v.frame then fn(v.frame) end
+        i=i+1
+    end
+end
+
 SLASH_CAWDPS1="/cawdps"
 SLASH_CAWDPS2="/cd"
 SlashCmdList["CAWDPS"]=function(msg)
-    if msg=="hide" then frame:Hide() elseif msg=="show" then frame:Show()
+    if msg=="hide" then forEachMeterWindow(function(f) f:Hide() end)
+    elseif msg=="show" then forEachMeterWindow(function(f) f:Show() end)
     elseif msg=="reset" then resetFight(); D.inCombat=false; D.segment="current"; updateUI(); chat("Current combat data reset. Window layout kept.")
     elseif msg=="resetpos" then resetWindowPosition(); saveWindowState(); updateUI(); chat("Window position reset.")
     elseif msg=="resetoverall" then D.overallSegment={actors={},duration=0,fights=0}; updateUI(); chat("Overall segment reset.")
@@ -5853,7 +5868,10 @@ SlashCmdList["CAWDPS"]=function(msg)
             chat(tostring(i)..": "..tostring((h and h.name) or "Fight").." - "..comma(dmg).." dmg, "..comma(heal).." heal, "..string.format("%.1fs",(h and h.duration) or 0)..", "..string.format("%.1f DPS",dps))
             i=i+1
         end
-    else if frame:IsVisible() then frame:Hide() else frame:Show() end end
+    else
+        if frame:IsVisible() then forEachMeterWindow(function(f) f:Hide() end)
+        else forEachMeterWindow(function(f) f:Show() end) end
+    end
 end
 SLASH_CAWDPSDEBUG1="/cddebug"
 SlashCmdList["CAWDPSDEBUG"]=function(msg)
