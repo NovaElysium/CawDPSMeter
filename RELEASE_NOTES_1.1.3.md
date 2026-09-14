@@ -19,6 +19,9 @@
 - **Crash fix:** `/cawinput` could crash the client via `GetCombatLogPath`
   (logsessions.dll) — a native access violation `pcall` cannot guard against.
   The call is removed rather than wrapped.
+- **Window fix:** `/cd hide`, `/cd show`, and the bare `/cd` toggle now act on
+  every open meter window, not just the primary one — hiding the meter no
+  longer leaves extra windows sitting on screen.
 - **Clearer overheal disclosure:** the healing footer tooltip now notes when
   totals come from raw combat text, which cannot carry an overheal amount, so
   raw-mode healing numbers are not overheal-corrected. This makes that

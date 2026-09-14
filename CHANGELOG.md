@@ -3,14 +3,6 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-- `/cd hide`, `/cd show`, and the bare `/cd` toggle only ever affected the
-  primary window. The up to three additional windows (Settings > add window)
-  were left exactly as they were, so hiding the meter left extra windows
-  sitting on screen. All three now act on every open window.
-
 ## [1.1.3] - 2026-09-13
 
 ### Changed
@@ -30,6 +22,10 @@ and [Semantic Versioning](https://semver.org/).
   `GetCombatLogPath` (logsessions.dll). `pcall` cannot protect against a crash
   inside injected native code, so the call is removed rather than guarded; it
   only produced one cosmetic diagnostic line.
+- `/cd hide`, `/cd show`, and the bare `/cd` toggle only ever affected the
+  primary window. The up to three additional windows (Settings > add window)
+  were left exactly as they were, so hiding the meter left extra windows
+  sitting on screen. All three now act on every open window.
 
 ### Added
 - Healing footer tooltip now notes when totals come from the raw combat-text
