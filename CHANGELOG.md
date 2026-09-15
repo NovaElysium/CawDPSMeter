@@ -26,6 +26,12 @@ and [Semantic Versioning](https://semver.org/).
   primary window. The up to three additional windows (Settings > add window)
   were left exactly as they were, so hiding the meter left extra windows
   sitting on screen. All three now act on every open window.
+- The "Visible bars" count could silently drop by one row right after being
+  set: it was read back by dividing the window's actual pixel height, and
+  this custom client's UI-scale conversion can round that height by a
+  fraction of a pixel, which `floor()` then rounded down a full row. The
+  slider (and the real bar count) now tolerates that rounding instead of
+  snapping back to the old value.
 
 ### Added
 - Healing footer tooltip now notes when totals come from the raw combat-text

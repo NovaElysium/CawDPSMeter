@@ -22,6 +22,10 @@
 - **Window fix:** `/cd hide`, `/cd show`, and the bare `/cd` toggle now act on
   every open meter window, not just the primary one — hiding the meter no
   longer leaves extra windows sitting on screen.
+- **Bars fix:** the "Visible bars" slider could snap back to its old value
+  right after you set it, showing one fewer player bar than chosen. Caused by
+  a sub-pixel window-height rounding quirk on this custom client; the count
+  is no longer thrown off by it.
 - **Clearer overheal disclosure:** the healing footer tooltip now notes when
   totals come from raw combat text, which cannot carry an overheal amount, so
   raw-mode healing numbers are not overheal-corrected. This makes that

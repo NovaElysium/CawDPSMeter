@@ -63,7 +63,11 @@ function D.uiClamp(f)
 end
 function D.uiVisibleRows(v,f)
     local s=D.uiSettings(v)
-    return math.max(1,math.min(20,math.floor((f:GetHeight()-51+s.rowGap)/(s.rowHeight+s.rowGap))))
+    -- Small epsilon guards against sub-pixel height rounding from this custom
+    -- 1.12 client's UI-scale conversion (see the edge-clamp comment below for
+    -- the same class of quirk), which could otherwise floor() a full row's
+    -- worth of height down to one fewer visible bar than was actually set.
+    return math.max(1,math.min(20,math.floor((f:GetHeight()-51+s.rowGap)/(s.rowHeight+s.rowGap)+0.1)))
 end
 function D.uiPanel(f,alpha)
     f:SetBackdrop({bgFile=TEX,edgeFile=TEX,edgeSize=1,insets={left=1,right=1,top=1,bottom=1}})
