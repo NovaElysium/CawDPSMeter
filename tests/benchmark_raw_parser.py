@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(os.environ.get('TEMP', '/tmp')) / 'caw-review-lupa')
 from lupa.lua51 import LuaRuntime, lua_type
 
 MODULES = ('CawDiagnostics.lua', 'CawHeader.lua', 'CawDPSMeter.lua',
-           'CawDPSLog.lua', 'CawSpellIcons.lua', 'CawThreat.lua', 'CawThreatSync.lua',
+           'CawTargets.lua', 'CawTargetSync.lua', 'CawDPSLog.lua', 'CawSpellIcons.lua', 'CawThreat.lua', 'CawThreatSync.lua',
            'CawTalentSync.lua', 'CawThreatCalibration.lua', 'CawServerThreat.lua',
            'CawDiagnosticsCommands.lua', 'CawPfUI.lua', 'CawUI.lua',
            'CawTalentView.lua', 'CawBreakdown.lua')
@@ -267,6 +267,8 @@ def new_vm(addon, dpslog=False, calibration=False):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute((ROOT / 'tests/mock_wow.lua').read_text(encoding='utf-8'))
     for name in MODULES:
+        if name in ('CawTargets.lua', 'CawTargetSync.lua') and not (addon / name).exists():
+            continue  # Older baselines predate destination recording.
         code = (addon / name).read_text(encoding='utf-8')
         vm.execute(re.sub(LEGACY_FOR, r'\1pairs(\2) do', code), name=name)
     vm.execute(SETUP)

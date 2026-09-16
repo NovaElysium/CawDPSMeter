@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADDON_ROOT = Path(os.environ.get('CAW_TEST_ADDON_ROOT', ROOT))
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute((ROOT / 'tests/mock_wow.lua').read_text(encoding='utf-8'))
-for name in ('CawDiagnostics.lua', 'CawHeader.lua', 'CawDPSMeter.lua', 'CawDPSLog.lua', 'CawSpellIcons.lua', 'CawThreat.lua', 'CawThreatSync.lua', 'CawTalentSync.lua',
+for name in ('CawDiagnostics.lua', 'CawHeader.lua', 'CawDPSMeter.lua', 'CawTargets.lua', 'CawTargetSync.lua', 'CawDPSLog.lua', 'CawSpellIcons.lua', 'CawThreat.lua', 'CawThreatSync.lua', 'CawTalentSync.lua',
              'CawThreatCalibration.lua', 'CawServerThreat.lua', 'CawDiagnosticsCommands.lua', 'CawPfUI.lua', 'CawUI.lua', 'CawTalentView.lua', 'CawBreakdown.lua'):
     code = (ADDON_ROOT / name).read_text(encoding='utf-8')
     code = re.sub(r'\b(for\s+\w+(?:\s*,\s*\w+)*\s+in\s+)([\w.]+(?:\[[^\]\n]+\])?)\s+do\b',
@@ -31,3 +31,18 @@ private = ADDON_ROOT / 'CawLocalSyncStatus.lua'
 if private.exists():
     lua.execute(private.read_text(encoding='utf-8'), name=private.name)
     lua.execute((ROOT / 'tests/local_ui_regressions.lua').read_text(encoding='utf-8'))
+
+lua.execute((ROOT / 'tests/window_customization_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/appearance_regressions.lua').read_text(encoding='utf-8-sig'))
+
+lua.execute((ROOT / 'tests/settings_usability_regressions.lua').read_text(encoding='utf-8-sig'))
+
+lua.execute((ROOT / 'tests/settings_popup_regressions.lua').read_text(encoding='utf-8-sig'))
+
+lua.execute((ROOT / 'tests/display_performance_regressions.lua').read_text(encoding='utf-8'))
+
+lua.execute((ROOT / 'tests/segment_timestamp_regressions.lua').read_text(encoding='utf-8'))
+
+lua.execute((ROOT / 'tests/overheal_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/target_breakdown_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/data_source_regressions.lua').read_text(encoding='utf-8'))

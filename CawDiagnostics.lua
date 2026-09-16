@@ -78,6 +78,43 @@ function D.diagWarn(code,message,context) D.diagLog("WARN",code,message,context,
 function D.diagCal(code,message,context) D.diagLog("CAL",code,message,context,nil) end
 function D.diagError(code,message,context,stack) D.diagLog("ERROR",code,message,context,stack) end
 
+-- Bounded summaries for on-demand target sync. Never retain packet payloads,
+-- actor tables, player names or combat events, and never send extra traffic.
+function D.targetSyncDiag(code,job)
+    local db=D.diagEnsureDB()
+    local history=db.targetSync
+    if type(history)~="table" or history.schema~=1 then
+        history={schema=1,sessions={}}; db.targetSync=history
+    end
+    local s=D.targetSyncDiagSession
+    if not s then
+        s={version=D.version,startedAt=D.diagStamp(),counts={},recent={}}
+        D.targetSyncDiagSession=s; table.insert(history.sessions,s)
+        while table.getn(history.sessions)>3 do table.remove(history.sessions,1) end
+    end
+    s.counts[code]=(s.counts[code] or 0)+1
+    local r={code=code,stamp=D.diagStamp()}
+    if job then
+        r.kind=job.kind; r.segment=job.context and job.context.segment; r.channel=job.channel
+        local b=job.buffer
+        if b then
+            r.expectedActors=b.ac; r.expectedTargets=b.tc; r.expectedRows=b.rc
+            r.receivedActors=b.actorsSeen; r.receivedTargets=b.targetsSeen; r.receivedRows=b.rowsSeen
+        end
+    end
+    s.last=code; s.updatedAt=r.stamp; table.insert(s.recent,r)
+    while table.getn(s.recent)>24 do table.remove(s.recent,1) end
+    s.parserEnabled=D.parserEnabled(); s.syncEnabled=D.combatSyncEnabled()
+    s.input=D.dpsLogActive and "DPSLog" or (D.dpsLogProbing and "probing" or "combat-text")
+end
+function D.targetSyncDiagSave()
+    if D.targetSyncRequest or D.targetSyncPlan or D.targetSyncOut then
+        D.targetSyncDiag("RELOAD_INTERRUPTED",D.targetSyncRequest or D.targetSyncOut)
+    end
+    local s=D.targetSyncDiagSession
+    if s then s.endedAt=D.diagStamp() end
+end
+
 function D.diagFlushBuffer()
     D.diagEnsureDB()
     local i=1
@@ -217,5 +254,6 @@ D.diagBootstrapFrame:SetScript("OnEvent",function()
         D.cleanupLegacySavedVariables()
     elseif event=="PLAYER_LOGOUT" then
         D.diagFlushBuffer()
+        D.targetSyncDiagSave()
     end
 end)

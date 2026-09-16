@@ -26,25 +26,39 @@ end
 function D.layoutMeterHeader(v)
     local f=v.frame; local w=f:GetWidth() or 440
     local font=D.uiFont or "Fonts\\FRIZQT__.TTF"
-    local size=17; local gap=3
+    local settings=D.uiSettings and D.uiSettings(v)
+    if D.uiWindowFont then font=D.uiWindowFont(v) end
+    local height=settings and settings.headerHeight or 24
+    local fontSize=math.min(settings and settings.headerFontSize or 11,height-8)
+    local size=math.max(13,math.min(24,height-7)); local gap=3
     local options=D.uiEnsureOptionsButton and D.uiEnsureOptionsButton(v)
     local overflow=D.uiEnsureOverflowButton and D.uiEnsureOverflowButton(v)
-    local compact=overflow and w<300
+    local compact=overflow and (w<300 or (settings and settings.alwaysOverflow))
     if v.headerCompact~=nil and v.headerCompact~=compact and D.uiCloseMeterMenus then D.uiCloseMeterMenus(v) end
     v.headerCompact=compact
     local buttons={}
     local canAdd=false
     if D.multiWindows then for i=2,D.multiWindowMax do if not D.multiWindows[i] then canAdd=true; break end end end
-    for _,b in ipairs({v.closeButton,v.lockButton,options,v.resetButton,v.reportButton,v.addButton}) do
-        if not compact and (b~=v.addButton or canAdd) then b:Show(); table.insert(buttons,b) else b:Hide() end
+    local hidden=false
+    for _,entry in ipairs({{v.closeButton,"showClose"},{v.lockButton,"showLock"},{options,"showSettings"},
+        {v.resetButton,"showReset"},{v.reportButton,"showReport"},{v.addButton,"showNew"}}) do
+        local b=entry[1]; local enabled=not settings or settings[entry[2]]
+        if b then
+            if not enabled then hidden=true end
+            if not compact and enabled and (b~=v.addButton or canAdd) then b:Show(); table.insert(buttons,b) else b:Hide() end
+        end
     end
-    if overflow then if compact then overflow:Show(); table.insert(buttons,overflow) else overflow:Hide() end end
+    if overflow then if compact or hidden then overflow:Show(); table.insert(buttons,overflow) else overflow:Hide() end end
+    local leftSide=settings and settings.buttonSide==2
     local i,previous
     for i=1,table.getn(buttons) do
         local b=buttons[i]
         b:ClearAllPoints(); b:SetWidth(size); b:SetHeight(size)
-        if previous then b:SetPoint("RIGHT",previous,"LEFT",-gap,0)
-        else b:SetPoint("TOPRIGHT",f,"TOPRIGHT",-5,-(24-size)/2) end
+        if leftSide then
+            if previous then b:SetPoint("LEFT",previous,"RIGHT",gap,0)
+            else b:SetPoint("TOPLEFT",f,"TOPLEFT",5,-(height-size)/2) end
+        elseif previous then b:SetPoint("RIGHT",previous,"LEFT",-gap,0)
+        else b:SetPoint("TOPRIGHT",f,"TOPRIGHT",-5,-(height-size)/2) end
         previous=b
     end
     local reserved=table.getn(buttons)*size+(table.getn(buttons)-1)*gap
@@ -66,9 +80,9 @@ function D.layoutMeterHeader(v)
         if v.modeMenu.up then v.modeMenu.up:SetWidth(math.max(1,mw-8)) end
         if v.modeMenu.down then v.modeMenu.down:SetWidth(math.max(1,mw-8)) end
     end
-    v.modeButton:ClearAllPoints(); v.modeButton:SetWidth(mw); v.modeButton:SetHeight(18)
-    v.modeButton:SetPoint("TOPLEFT",f,"TOPLEFT",5,-3)
-    v.segmentButton:ClearAllPoints(); v.segmentButton:SetWidth(sw); v.segmentButton:SetHeight(18)
+    v.modeButton:ClearAllPoints(); v.modeButton:SetWidth(mw); v.modeButton:SetHeight(height-6)
+    v.modeButton:SetPoint("TOPLEFT",f,"TOPLEFT",leftSide and 10+reserved or 5,-3)
+    v.segmentButton:ClearAllPoints(); v.segmentButton:SetWidth(sw); v.segmentButton:SetHeight(height-6)
     v.segmentButton:SetPoint("LEFT",v.modeButton,"RIGHT",3,0)
     D.layoutSegmentMenu(v)
     local selectors={{v.modeButton,v.modeText,v.modeArrow,mw},{v.segmentButton,v.segmentText,v.segmentArrow,sw}}
@@ -76,17 +90,18 @@ function D.layoutMeterHeader(v)
         local s=selectors[i]; local arrow=s[3]; local inset=w<200 and 3 or 5
         s[2]:ClearAllPoints(); s[2]:SetPoint("LEFT",s[1],"LEFT",inset,0)
         s[2]:SetWidth(math.max(8,s[4]-inset-12))
-        s[2]:SetHeight(14); s[2]:SetFont(font,11)
+        s[2]:SetHeight(math.min(height-6,fontSize+3)); s[2]:SetFont(font,fontSize)
+        if settings and D.uiApplyTextStyle then D.uiApplyTextStyle(s[2],settings,fontSize) end
         if arrow then
             arrow:ClearAllPoints(); arrow:SetPoint("RIGHT",s[1],"RIGHT",-4,0)
             arrow:Show()
         end
     end
     if v.reportMenu then
-        v.reportMenu:ClearAllPoints(); v.reportMenu:SetPoint("TOPRIGHT",compact and overflow or v.reportButton,"BOTTOMRIGHT",0,-2)
+        v.reportMenu:ClearAllPoints(); v.reportMenu:SetPoint("TOPRIGHT",v.reportButton:IsShown() and v.reportButton or overflow,"BOTTOMRIGHT",0,-2)
     end
-    v.header:SetHeight(23)
-    v.headerLine:ClearAllPoints(); v.headerLine:SetPoint("TOPLEFT",f,"TOPLEFT",1,-24); v.headerLine:SetPoint("TOPRIGHT",f,"TOPRIGHT",-1,-24)
+    v.header:SetHeight(height-1)
+    v.headerLine:ClearAllPoints(); v.headerLine:SetPoint("TOPLEFT",f,"TOPLEFT",1,-height); v.headerLine:SetPoint("TOPRIGHT",f,"TOPRIGHT",-1,-height)
     v.toolbar:Hide(); v.toolbarLine:Hide()
     v.summary:ClearAllPoints(); v.summary:SetPoint("BOTTOMLEFT",f,"BOTTOMLEFT",6,3)
     v.summary:SetWidth(math.max(1,w-26)); v.summary:SetHeight(12); v.summary:SetJustifyH("LEFT"); v.summary:SetFont(font,9); v.summary:Show()

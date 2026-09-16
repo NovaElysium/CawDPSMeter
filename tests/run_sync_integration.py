@@ -147,11 +147,18 @@ def combat_sync(extra_windows=False, raid=False):
     for vm,own,other,start in [(a,'0xA1','0xB1',190),(b,'0xB1','0xA1',195)]:
         vm.execute(f'''
         NOW=200; PLAYER_COMBAT=true
+        time=function() return 1700000000+math.floor(GetTime()) end
+        local zone={7200 if own == '0xA1' else -21600}
+        date=function(format,stamp)
+            if format~='%H:%M:%S' then return 'test-session' end
+            local seconds=math.mod(stamp+zone,86400)
+            return string.format('%02d:%02d:%02d',math.floor(seconds/3600),math.floor(math.mod(seconds,3600)/60),math.mod(seconds,60))
+        end
         UNITS.pet={{guid='{own}',name='Pet',class='WARRIOR'}}
         UNITS.partypet1={{guid='{other}',name='Other pet',class='WARRIOR'}}
         fire(CAW_DPS_METER.events,'UNIT_PET','player')
         local d=CAW_DPS_METER
-        d.inCombat=true; d.startTime={start}; d.syncRequested=true
+        d.inCombat=true; d.setFightStartTime({start}); d.syncRequested=true
         d.threatCalEnabled=false
         ''')
         if raid:
@@ -202,6 +209,9 @@ def combat_sync(extra_windows=False, raid=False):
     assert d.actors['0xA'].healSpells.Heal.healing==315
     assert d.actors['0xA1'].damage==120 and d.actors['0xA1'].ownerKey=='0xA' and d.actors['0xA1'].isPet
     assert d.startTime<195
+    assert abs(d.fightStartedAt-(1700000000+d.startTime))<1, 'sync lost the local wall-clock pull anchor'
+    assert d.fightStartedAt<1700000195, 'sync did not correct the later local pull timestamp'
+    assert a.eval("CAW_DPS_METER.historyLabel({name='Mob',startedAt=1700000190})") != b.eval("CAW_DPS_METER.historyLabel({name='Mob',startedAt=1700000190})"), 'local display ignored the client timezone'
     assert d.threatSyncPeers['0xA'] is not None, 'combat selection swallowed a peer announcement'
     assert d.talentProfiles['0xA'].available, 'talent sync broke during combat transfer'
     trace=list(sent)
@@ -295,3 +305,72 @@ for setting in ('parserEnabled','combatSyncEnabled'):
     assert d.actors['0xA'] is None, 'disabled receiver accepted a partial or late snapshot'
     assert not d.syncNonce and len(d.syncQueue)==0
     print('PASS '+setting+' can stop an in-flight snapshot without applying partial or late data')
+
+# Structured overheal travels as optional trailing fields on existing E packets.
+wire.clear(); sent.clear()
+a=client('Alpha','0xA','PRIEST','Bravo','0xB','PRIEST')
+b=client('Bravo','0xB','PRIEST','Alpha','0xA','PRIEST')
+clients={'Alpha':a,'Bravo':b}
+for vm,start in ((a,790),(b,795)):
+    vm.execute(f'''
+    NOW=800; PLAYER_COMBAT=true
+    fire(CAW_DPS_METER.events,'PLAYER_REGEN_DISABLED')
+    local d=CAW_DPS_METER
+    d.setFightStartTime({start}); d.syncRequested=true; d.threatCalEnabled=false
+    d.dpsLogActive=true; d.dpsLogProbing=false
+    d.dpsLogReceive('SWING_DAMAGE','0xA','Alpha',1,0,'0xF1','Mob',64,0,10,-1,1,0,0,0,nil)
+    function testHeal(amount,over)
+        return d.dpsLogReceive('SPELL_HEAL','0xA','Alpha',1,0,'0xB','Bravo',1,0,2060,'Heal',2,amount,over,0,nil)
+    end
+    testHeal(100,40)
+    ''')
+a.execute('testHeal(200,200)')
+b.execute("SlashCmdList.CAWDPSSYNCDEBUG('retry')")
+d=b.globals().CAW_DPS_METER
+injected=False
+for i in range(160):
+    tick(800+i*.05)
+    if d.syncIncoming is not None and not injected:
+        a.execute('testHeal(100,20)'); b.execute('testHeal(100,20)')
+        injected=True
+    if d.syncReceived==1:
+        break
+    if injected:
+        assert d.actors['0xA'].overhealing==60, 'partial overheal snapshot was applied'
+assert injected and d.syncReceived==1
+assert d.actors['0xA'].healing==140 and d.actors['0xA'].overhealing==260
+assert d.actors['0xA'].overhealTotal==400 and d.actors['0xA'].overhealHits==3
+assert d.actors['0xA'].healSpells.Heal.overhealing==260
+packets=[msg for name,msg,_ in sent if name=='Alpha' and msg.startswith('E~')]
+assert any(len(msg.split('~'))==12 for msg in packets)
+assert all(len(msg.encode())<=240 for msg in packets)
+print('PASS overheal sync merges full overheal and newer local heals atomically without duplicate effective healing')
+retry_at=b.globals().NOW
+b.execute("SlashCmdList.CAWDPSSYNCDEBUG('retry')")
+for i in range(160):
+    tick(retry_at+.05+i*.05)
+    if d.syncReceived==2: break
+assert d.syncReceived==2 and d.actors['0xA'].overhealing==260 and d.actors['0xA'].overhealTotal==400
+print('PASS repeated structured healing snapshots do not duplicate overheal amounts or denominator')
+assert d.actors['0xA'].healingTargets['0xB'].healing == 140
+assert d.actors['0xA'].healingTargets['0xB'].overhealing == 60
+assert d.actors['0xA'].healingTargets['0xB'].overhealTotal == 200
+b.execute('''
+local d=CAW_DPS_METER; local cache={}
+local rows,total=d.targetBreakdownEntries(d.breakdownContext({mode='overhealing',segment='current'}),'0xA',nil,cache)
+assert(total==60 and cache.fullTotal==260 and cache.gross==200)
+assert(d.overhealPercent(total,cache.gross)=='30.0%')
+''')
+print('PASS target observations survive sync retries without inheriting unobserved recipients or overheal')
+
+# Simulate a legacy sender (no trailing coverage fields), then malformed optional
+# fields. Neither may turn unknown data into zero or erase known coverage.
+for suffix in ('', '~999~1~3~0'):
+    b.execute("CAW_DPS_METER.syncNonce='legacy'; CAW_DPS_METER.syncSelectedSource='Alpha'")
+    for msg in ('H~legacy~100~0xF1~Mob~0xF1',
+                'A~legacy~0xA~Alpha~0xA~~0~PRIEST~10~200~1~0~4~0',
+                'E~legacy~0xA~Heal~200~4~0~2060'+suffix, 'Z~legacy'):
+        b.globals().fire(d.events,'CHAT_MSG_ADDON',d.syncPrefix,msg,'PARTY','Alpha')
+    assert d.actors['0xA'].healing==200
+    assert d.actors['0xA'].overhealing==260 and d.actors['0xA'].overhealTotal==400
+print('PASS legacy or malformed optional healing fields preserve known local overheal without inventing coverage')

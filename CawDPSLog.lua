@@ -4,6 +4,44 @@ local D=CAW_DPS_METER
 D.dpsLogVersion="2"
 D.dpsLogEvents=0
 D.dpsLogRejected=0
+-- Describe the current producer, not the provenance of saved fights. Reading
+-- this status must never probe a DLL, change producers or trigger a sync.
+function D.combatInputStatus()
+    local source,detail,sync,syncDetail
+    if not D.parserEnabled() then
+        source="Paused"
+        detail="Local recording is paused. Saved fights remain available."
+    elseif D.dpsLogProbing then
+        source="Waiting for DPSLog"
+        detail="Waiting for a combat event to check DPSLog. No extra details have been confirmed yet."
+    elseif D.dpsLogActive then
+        source="DPSLog"
+        detail="Records damage, healing and targets. Overheal is shown when supplied. Combat text fills in other events."
+    else
+        source="Combat text"
+        if D.dpsLogRawCommitted and not D.dpsLogInitialized and type(CombatLogGetCurrentEventInfo)=="function" then
+            detail="DPSLog appeared after recording began. Combat text is active; use /reload to switch."
+        elseif D.dpsLogFallback and type(CombatLogGetCurrentEventInfo)=="function" then
+            detail="DPSLog could not be used. Combat text records damage and healing. See /cawinput for details."
+        else
+            detail="Records damage and healing. Overheal and target details need DPSLog data from Caw Sync."
+        end
+    end
+    if not D.parserEnabled() then
+        sync="Paused"
+        syncDetail="Turn on Record combat to resume sharing. Existing shared data stays available."
+    elseif not D.combatSyncEnabled() then
+        sync="Off"
+        syncDetail="Only local combat is recorded. Existing shared data stays available."
+    elseif GetNumRaidMembers()==0 and GetNumPartyMembers()==0 then
+        sync="Waiting for group"
+        syncDetail="Enabled. Shares combat data with other Caw users in your party or raid."
+    else
+        sync="On"
+        syncDetail="Other Caw users can fill gaps. Target details load when opened and may be incomplete."
+    end
+    return source,detail,sync,syncDetail
+end
 local moduleCache,moduleCacheAt
 local function moduleDiagnostics()
     local now=GetTime()
@@ -41,18 +79,22 @@ local function number(value)
     return type(value)=="number" and value==value and value>=0 and value<math.huge
 end
 local function truth(value) return value==true or value==1 or value=="1" end
-function D.dpsLogSaveStatus(session)
+function D.dpsLogSaveStatus(session,countsOnly)
     local s=session or (D.threatCalEnabled and D.threatCalSession)
     if s then
         s.combatInput=D.dpsLogActive and "DPSLog+RAW-utility" or "RAW"
-        s.dpsLogStatus={received=D.dpsLogEvents,rejected=D.dpsLogRejected,
-            error=D.dpsLogLastError,fallback=D.dpsLogFallback,
-            adapterVersion=D.dpsLogVersion,apiType=type(CombatLogGetCurrentEventInfo),
-            initialApiType=D.dpsLogInitialApiType,probing=D.dpsLogProbing or false,
-            registered=D.dpsLogRegistered or false,rawCommitted=D.dpsLogRawCommitted or false,
-            initializationAttempts=D.dpsLogInitAttempts or 0,
-            registrationError=D.dpsLogRegistrationError,
-            modules=moduleDiagnostics()}
+        local t=s.dpsLogStatus
+        if not t then t={}; s.dpsLogStatus=t; countsOnly=false end
+        t.received=D.dpsLogEvents; t.rejected=D.dpsLogRejected
+        -- Keep counters exact without rebuilding diagnostic metadata per hit.
+        -- Full snapshots still run on transitions, errors, the 1s tick/logout.
+        if countsOnly then return end
+        t.error=D.dpsLogLastError; t.fallback=D.dpsLogFallback
+        t.adapterVersion=D.dpsLogVersion; t.apiType=type(CombatLogGetCurrentEventInfo)
+        t.initialApiType=D.dpsLogInitialApiType; t.probing=D.dpsLogProbing or false
+        t.registered=D.dpsLogRegistered or false; t.rawCommitted=D.dpsLogRawCommitted or false
+        t.initializationAttempts=D.dpsLogInitAttempts or 0
+        t.registrationError=D.dpsLogRegistrationError; t.modules=moduleDiagnostics()
     end
 end
 local status=D.dpsLogSaveStatus
@@ -104,7 +146,7 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
     end
     if D.dpsLogProbing then choose(true) end
     D.dpsLogEvents=D.dpsLogEvents+1
-    status()
+    status(nil,true)
     local info=src and D.guidToActor[src]
     -- Membership comes from our roster or a proven summon chain, not just a
     -- friendly flag. Never pull unrelated nearby players into group totals.
@@ -133,11 +175,18 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
             amount=a4; over=a5; id=a1; spell=spellName(a1,a2)
             critical=healing[sub] and a7 or a10
         end
-        if not number(amount) or (over~=nil and (type(over)~="number" or over~=over)) then
+        if not number(amount) or (over~=nil and (type(over)~="number" or over~=over or over>=math.huge or over<=-math.huge)) then
             return reject("invalid amount suffix")
         end
         local effective=amount
-        if healing[sub] then effective=math.max(0,amount-math.max(0,over or 0)) end
+        local recordedOver=nil
+        if healing[sub] then
+            if over~=nil and over>=0 then
+                if not number(over) or over>amount then return reject("invalid overheal suffix") end
+                recordedOver=over
+            end
+            effective=amount-(recordedOver or 0)
+        end
         -- Enrich existing bounded calibration events, not a second raw recorder.
         D.dpsLogCurrent={subevent=sub,sourceGuid=src,destGuid=dst,spellId=id,
             amount=amount,overAmount=over,sourceFlags=srcFlags,destFlags=dstFlags,
@@ -152,7 +201,7 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
             D.dpsLogCurrent.glancing=truth(a11); D.dpsLogCurrent.crushing=truth(a12)
         end
         local ok,result=pcall(D.acceptStructuredAmount,healing[sub] and "healing" or "damage",
-            info,dst,dstName,spell,effective,truth(critical),id)
+            info,dst,dstName,spell,effective,truth(critical),id,recordedOver)
         D.dpsLogCurrent=nil; D.threatEventTarget=nil
         if not ok then return reject("amount handler: "..tostring(result)) end
         return result
@@ -249,7 +298,7 @@ end)
 D.dpsLogInitialize()
 SLASH_CAWINPUT1="/cawinput"
 SlashCmdList.CAWINPUT=function()
-    if not D.parserEnabled() then DEFAULT_CHAT_FRAME:AddMessage("Caw: Combat parser paused. Resume in Settings > General."); return end
+    if not D.parserEnabled() then DEFAULT_CHAT_FRAME:AddMessage("Caw: Combat parser paused. Resume in Settings > Combat & sync."); return end
     DEFAULT_CHAT_FRAME:AddMessage("Caw input: "..(D.dpsLogProbing and "waiting for DPSLog event" or (D.dpsLogActive and "DPSLog damage/healing + RAW utility" or "SuperWoW RAW"))
         .." | Events: "..D.dpsLogEvents.." | Rejected: "..D.dpsLogRejected)
     if D.dpsLogLastError then DEFAULT_CHAT_FRAME:AddMessage(D.dpsLogLastError) end

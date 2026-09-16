@@ -3,7 +3,7 @@ local checks=0
 local function check(v,label) assert(v,label); checks=checks+1; print("PASS UI "..label) end
 local function click(f,button) this=f; arg1=button or "LeftButton"; f.scripts.OnClick() end
 local function byLabel(parent,label)
-    for _,f in ipairs(FRAMES) do if f.parent==parent and f.kind=="Button" and f.text and type(f.text)=="table" and f.text:GetText()==label then return f end end
+    for _,f in ipairs(FRAMES) do if f.parent==parent and f.kind=="Button" and f.text and type(f.text)=="table" and (f.text:GetText()==label or f.page==label) then return f end end
     error("button not found: "..label)
 end
 D.appearance=D.uiCopySettings(nil)

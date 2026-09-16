@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.1.3
+-- Caw DPS Meter v1.1.4
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.1.3"
+D.version = "1.1.4"
 function D.parserEnabled()
     return not CawDPSMeterCharDB or CawDPSMeterCharDB.parserEnabled~=false
 end
@@ -15,6 +15,19 @@ D.parserEvents={RAW_COMBATLOG=true,UNIT_CASTEVENT=true,CHAT_MSG_COMBAT_FRIENDLY_
     PLAYER_REGEN_DISABLED=true,PLAYER_REGEN_ENABLED=true,UNIT_INVENTORY_CHANGED=true,PLAYER_AURAS_CHANGED=true}
 D.inCombat = false
 D.startTime = 0
+D.fightStartedAt = nil
+D.fightStartClock = nil
+-- Keep the wall-clock label separate from GetTime-based fight duration.
+-- Adjust the original wall-clock anchor when a sync snapshot reveals an
+-- earlier pull, instead of recording receipt time or combat-end time.
+function D.setFightStartTime(start)
+    if D.fightStartedAt and D.fightStartClock then
+        D.fightStartedAt=D.fightStartedAt+start-D.fightStartClock
+    elseif type(time)=="function" then
+        D.fightStartedAt=time()-(GetTime()-start)
+    end
+    D.startTime=start; D.fightStartClock=start
+end
 D.lastDuration = 0
 D.rawTotal = 0
 D.parsedTotal = 0
@@ -498,7 +511,7 @@ local function initializeSavedVariables()
     local savedMode=nil
     if CharDB and CharDB.mode then savedMode=CharDB.mode
     elseif DB and DB.mode then savedMode=DB.mode end
-    if savedMode=="damage" or savedMode=="healing" or savedMode=="threat" or savedMode=="damageTaken" or savedMode=="deaths"
+    if savedMode=="damage" or savedMode=="healing" or savedMode=="overhealing" or savedMode=="threat" or savedMode=="damageTaken" or savedMode=="deaths"
         or savedMode=="interrupts" or savedMode=="cc" or savedMode=="ccBreaks" or savedMode=="dispels"
         or savedMode=="buffs" or savedMode=="debuffsCast" or savedMode=="debuffsReceived" then
         D.mode=savedMode
@@ -828,6 +841,7 @@ end
 local function resetFight()
     if D.threatCalRecordEvent then D.threatCalRecordEvent({kind="segment-reset",source="Current reset/start"}) end
     clearTable(D.actors); D.startTime=0; D.lastDuration=0; D.parsedTotal=0; D.lastParsed="none"
+    D.fightStartedAt=nil; D.fightStartClock=nil
     D.rawUnknown={}; D.rawUnknownCount=0; D.utilityUnknown={}; D.utilityUnknownCount=0; D.ignoredOutsiders=0
     D.globalUtility={buffs={},debuffsReceived={},debuffsCast={},cc={},ccBreaks={},interrupts={},dispels={}}
     D.pendingSelfTotem=nil
@@ -877,12 +891,12 @@ local function ensureStarted()
         D.logLine("seg","ensureStarted OPEN (was closed) via "..tostring(D.currentRawEv or "?").." | "..tostring(D.currentRawText or ""))
         resetFight()
         D.inCombat=true
-        D.startTime=GetTime()
+        D.setFightStartTime(GetTime())
         opened=true
         if D.seedActiveRosterBuffs then D.seedActiveRosterBuffs() end
     elseif D.startTime==0 then
         D.logLine("seg","ensureStarted set startTime (inCombat, start 0) via "..tostring(D.currentRawEv or "?"))
-        D.startTime=GetTime()
+        D.setFightStartTime(GetTime())
         opened=true
     end
     if opened and requestCombatSync then requestCombatSync() end
@@ -916,14 +930,43 @@ local function addHealSpell(a,spell,amount,crit,spellId)
     if not h then h={healing=0,hits=0,crits=0}; a.healSpells[spell]=h end
     if spellId and not h.spellId then h.spellId=tonumber(spellId) end
     h.healing=h.healing+amount; h.hits=h.hits+1; if crit then h.crits=h.crits+1 end
+    return h
 end
-local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent,spellId)
-    amount=tonumber(amount); if not amount or amount<=0 then return false end
+D.overhealFields={"overhealing","overhealTotal","overhealHits","overhealCrits"}
+function D.overhealSummary(actors,actor)
+    local over,gross=nil,nil
+    for _,a in pairs(actors or {}) do
+        if (not actor or a==actor or (not actor.isPet and a.isPet and a.ownerKey==actor.key))
+            and a.overhealTotal~=nil then
+            over=(over or 0)+(a.overhealing or 0); gross=(gross or 0)+a.overhealTotal
+        end
+    end
+    return over,gross
+end
+function D.overhealPercent(over,gross)
+    if over==nil or gross==nil then return "--" end
+    return string.format("%.1f%%",gross>0 and 100*over/gross or 0)
+end
+function D.overhealFooter(actors)
+    local over,gross=D.overhealSummary(actors)
+    if over==nil then return "No overheal data" end
+    return "Total: "..comma(over).." | "..D.overhealPercent(over,gross).." OH"
+end
+local function addHealing(actorKey,actorName,guid,ownerKey,isPet,amount,spell,crit,sourceEvent,spellId,over)
+    amount=tonumber(amount); if not amount or amount<0 or (amount==0 and (not over or over<=0)) then return false end
     if not ensureStarted() then return false end
     if sourceEvent~="DPSLog" then D.dpsLogRawCommitted=true end
     local a=getActor(actorKey,actorName,guid,ownerKey,isPet)
     a.healing=a.healing+amount; a.heals=a.heals+1; if crit then a.healCrits=a.healCrits+1 end
-    addHealSpell(a,spell,amount,crit,spellId); if D.threatOnHealing then D.threatOnHealing(a,amount,spell) end; D.parsedTotal=D.parsedTotal+1
+    local h=addHealSpell(a,spell,amount,crit,spellId)
+    if over~=nil then
+        a.overhealing=(a.overhealing or 0)+over; h.overhealing=(h.overhealing or 0)+over
+        a.overhealTotal=(a.overhealTotal or 0)+amount+over; h.overhealTotal=(h.overhealTotal or 0)+amount+over
+        a.overhealHits=(a.overhealHits or 0)+1; h.overhealHits=(h.overhealHits or 0)+1
+        local critical=crit and 1 or 0
+        a.overhealCrits=(a.overhealCrits or 0)+critical; h.overhealCrits=(h.overhealCrits or 0)+critical
+    end
+    if amount>0 and D.threatOnHealing then D.threatOnHealing(a,amount,spell) end; D.parsedTotal=D.parsedTotal+1
     D.lastRosterCombatActivity=GetTime()
     D.lastParsed=tostring(sourceEvent).." "..tostring(a.name).." "..tostring(spell).." +"..tostring(amount).." heal"; return true
 end
@@ -1070,6 +1113,7 @@ end
 
 -- Caw Sync -----------------------------------------------------------------
 function D.cancelCombatSync()
+    if D.cancelTargetSync then D.cancelTargetSync() end
     D.syncQueue={}; D.syncNonce=nil; D.syncIncoming=nil; D.syncSelectedSource=nil
     D.syncOffers={}; D.syncOfferDeadline=0; D.syncRequested=false; D.syncRequestSent=false
     D.nextCombatSyncCheck=0
@@ -1209,7 +1253,15 @@ local function buildSyncSnapshot(nonce,target)
         end
         local hname,h
         for hname,h in a.healSpells do
-            queueSync("E~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(hname).."~"..tostring(math.floor(h.healing or 0)).."~"..tostring(math.floor(h.hits or 0)).."~"..tostring(math.floor(h.crits or 0)).."~"..syncField(h.spellId),replyChannel,nil)
+            local message="E~"..syncField(nonce).."~"..syncField(a.key or key).."~"..syncField(hname).."~"..tostring(math.floor(h.healing or 0)).."~"..tostring(math.floor(h.hits or 0)).."~"..tostring(math.floor(h.crits or 0)).."~"..syncField(h.spellId)
+            if h.overhealTotal~=nil then
+                local extended=message
+                for _,field in ipairs(D.overhealFields) do extended=extended.."~"..tostring(math.floor(h[field] or 0)) end
+                -- Older clients ignore trailing fields. Never drop the original
+                -- healing packet if the optional extension would exceed its cap.
+                if string.len(extended)<=240 then message=extended end
+            end
+            queueSync(message,replyChannel,nil)
         end
     end
     queueSync("Z~"..syncField(nonce),replyChannel,nil)
@@ -1238,6 +1290,7 @@ local function captureSyncBaseline()
         local hname,h
         for hname,h in a.healSpells do
             b.healSpells[hname]={healing=h.healing or 0,hits=h.hits or 0,crits=h.crits or 0,spellId=h.spellId}
+            for _,field in ipairs(D.overhealFields) do b.healSpells[hname][field]=h[field] end
         end
         base.actors[key]=b
     end
@@ -1293,6 +1346,9 @@ local function applyBufferedSnapshot(incoming)
             live.healing=syncMergedValue(rh.healing,bh.healing,live.healing)
             live.hits=syncMergedValue(rh.hits,bh.hits,live.hits)
             live.crits=syncMergedValue(rh.crits,bh.crits,live.crits)
+            if rh.overhealTotal~=nil then
+                for _,field in ipairs(D.overhealFields) do live[field]=syncMergedValue(rh[field],bh[field],live[field]) end
+            end
         end
 
         -- Keep aggregate actor totals consistent with the spell breakdown
@@ -1313,6 +1369,13 @@ local function applyBufferedSnapshot(incoming)
             sumHealCrits=sumHealCrits+(sv.crits or 0)
         end
         a.healing=sumHealing; a.heals=sumHeals; a.healCrits=sumHealCrits
+        -- Derive optional totals from the spell records that actually carry
+        -- structured coverage; legacy snapshots cannot erase known data.
+        for _,field in ipairs(D.overhealFields) do
+            local sum=nil
+            for _,h in pairs(a.healSpells) do if h[field]~=nil then sum=(sum or 0)+h[field] end end
+            a[field]=sum
+        end
     end
 
     -- Preserve the older source's fight age. Time spent receiving the snapshot
@@ -1322,7 +1385,7 @@ local function applyBufferedSnapshot(incoming)
     local localAge=0
     if D.startTime and D.startTime>0 then localAge=GetTime()-D.startTime end
     if remoteAge>localAge and remoteAge>D.syncBestAge then
-        D.startTime=GetTime()-remoteAge
+        D.setFightStartTime(GetTime()-remoteAge)
         D.syncBestAge=remoteAge
     end
     if incoming.fightName and incoming.fightName~="" and (not D.currentFightName or D.currentFightName=="Current" or D.currentFightName=="Unknown Enemy") then
@@ -1419,6 +1482,10 @@ local function applySyncMessage(sender,msg,channel)
         if D.threatSyncReceive then D.threatSyncReceive(sender,p,channel) end
         return
     end
+    if kind=="Y" then
+        if D.targetSyncReceive then D.targetSyncReceive(sender,p,channel) end
+        return
+    end
     if not D.combatSyncEnabled() then return end
     local selfName=UnitName("player") or ""
 
@@ -1508,6 +1575,12 @@ local function applySyncMessage(sender,msg,channel)
         local r=incoming.actors[key]
         if not r then r={spells={},healSpells={}}; incoming.actors[key]=r end
         r.healSpells[spell]={healing=p[5],hits=p[6],crits=p[7],spellId=tonumber(p[8])}
+        local over,gross,hits,crits=tonumber(p[9]),tonumber(p[10]),tonumber(p[11]),tonumber(p[12])
+        if over and gross and hits and crits and over>=0 and gross>=over and gross<math.huge
+            and hits>=1 and hits<math.huge and hits==math.floor(hits) and crits>=0 and crits<=hits and crits==math.floor(crits) then
+            local h=r.healSpells[spell]
+            h.overhealing=over; h.overhealTotal=gross; h.overhealHits=hits; h.overhealCrits=crits
+        end
         return
     end
 
@@ -2910,7 +2983,7 @@ end -- private dispatch cache scope (Vanilla limits locals per function)
 -- Narrow structured-input bridge; utility/death/RAW threat confirmation remain
 -- on their existing paths. Only damage and healing have one exclusive producer.
 D.parseRawReplay=parseRaw
-D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,spellId)
+D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,spellId,over)
     if not D.parserEnabled() then return false end
     if D.localPlayerDead and not D.inCombat then return false end
     if not info or not ensureStarted() then return false end
@@ -2928,7 +3001,9 @@ D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,
                 active.breakAmount=amount; active.breakTime=hit.time
             end
         end
-        return addDamage(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId)
+        local accepted=addDamage(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId)
+        if accepted and D.recordTargetAmount then D.recordTargetAmount(D.actors[info.key],kind,target,targetName,spell,amount,crit,spellId) end
+        return accepted
     end
     local ti=target and D.guidToActor[target]
     if ti then
@@ -2936,7 +3011,9 @@ D.acceptStructuredAmount=function(kind,info,target,targetName,spell,amount,crit,
         D.backfillAuraSource(ta and ta.buffs,spell,info.name,info.guid or info.key)
         D.addAuraSourceHealing(ta and ta.buffs,spell,info.name,info.guid or info.key,amount)
     end
-    return addHealing(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId)
+    local accepted=addHealing(info.key,info.name,info.guid,info.ownerKey,info.isPet,amount,spell,crit,"DPSLog",spellId,over)
+    if accepted and D.recordTargetAmount then D.recordTargetAmount(D.actors[info.key],"healing",target,targetName,spell,amount,crit,spellId,over) end
+    return accepted
 end
 
 local function deepCopyTable(src)
@@ -2957,7 +3034,9 @@ local function mergeNumericTable(dst,src)
     for k,v in src do
         if k~="active" and k~="debuffs" and k~="deathLast" and k~="_cawDisplayValue" then
             if type(v)=="number" then
-                if k=="maxCrit" then
+                if k=="spellId" then
+                    if not dst[k] then dst[k]=v end
+                elseif k=="maxCrit" then
                     if v>(dst[k] or 0) then dst[k]=v end
                 else
                     dst[k]=(dst[k] or 0)+v
@@ -3003,7 +3082,7 @@ end
 
 local function snapshotFinishedFight()
     local total=0; local k,a
-    for k,a in D.actors do total=total+(a.damage or 0)+(a.healing or 0)+(a.damageTaken or 0)+(a.deaths or 0) end
+    for k,a in D.actors do total=total+(a.damage or 0)+(a.healing or 0)+(a.overhealing or 0)+(a.damageTaken or 0)+(a.deaths or 0) end
     if total<=0 then D.logLine("hist","snapshotFinishedFight SKIPPED (total 0)"); return end
     D.logLine("hist","snapshotFinishedFight '"..tostring(currentFightLabel()).."' dur="..string.format("%.2f",D.lastDuration or 0))
     local entry={
@@ -3012,13 +3091,16 @@ local function snapshotFinishedFight()
         actors=deepCopyTable(D.actors),
         duration=D.lastDuration or 0,
         name=currentFightLabel(),
+        startedAt=D.fightStartedAt,
         when=GetTime()
     }
+    if D.targetSyncSaveFight then D.targetSyncSaveFight(entry) end
     table.insert(D.fightHistory,1,entry)
     while table.getn(D.fightHistory)>10 do table.remove(D.fightHistory) end
     mergeOverallActors(D.actors)
     D.overallSegment.duration=(D.overallSegment.duration or 0)+(D.lastDuration or 0)
     D.overallSegment.fights=(D.overallSegment.fights or 0)+1
+    if D.targetSyncFinishFight then D.targetSyncFinishFight(entry) end
 end
 
 local function totalDamage()
@@ -3064,44 +3146,87 @@ local function auraAverageUptime(a,kind,duration)
     if pct>100 then pct=100 end
     return pct
 end
-local function sortedActors()
-    local list={}; local n=0; local k,a; local actors=getDisplayActors()
-    local petTotals=nil
-
-    -- Damage/healing rows fold pets into their owners. Previously every
-    -- table.sort comparison rescanned the entire actor table for matching pets.
-    -- In a 40-player raid that turns one UI refresh into many redundant scans.
-    -- Build owner pet totals once, then sort cached row values.
-    if D.mode=="damage" or D.mode=="healing" then
-        petTotals={}
-        for k,a in actors do
-            if a.isPet and a.ownerKey then
-                local pv
-                if D.mode=="damage" then pv=a.damage or 0 else pv=a.healing or 0 end
-                petTotals[a.ownerKey]=(petTotals[a.ownerKey] or 0)+pv
+do
+    -- Display-only caches: never copied into combat snapshots or saved data.
+    -- Validate actual values on every read, including late sync corrections.
+    -- Weak actor-map keys let discarded encounters and their caches expire.
+    local caches=setmetatable({}, {__mode="k"})
+    local function order(x,y)
+        if x.value==y.value then return tostring(x.actor.key)<tostring(y.actor.key) end
+        return x.value>y.value
+    end
+    function D.meterSortedRows(actors,mode)
+        local modes=caches[actors]
+        if not modes then modes={}; caches[actors]=modes end
+        local c=modes[mode]
+        if not c then
+            c={rows={},actorList={},byActor={},pets={},petGross={},revision=0,pass=0}
+            modes[mode]=c
+        end
+        c.pass=c.pass+1
+        local changed=false; local petTotals=c.pets
+        clearTable(petTotals); clearTable(c.petGross)
+        local k,a
+        if mode=="damage" or mode=="healing" or mode=="overhealing" then
+            for k,a in actors do
+                if a.isPet and a.ownerKey then
+                    petTotals[a.ownerKey]=(petTotals[a.ownerKey] or 0)+(a[mode] or 0)
+                    if mode=="overhealing" then c.petGross[a.ownerKey]=(c.petGross[a.ownerKey] or 0)+(a.overhealTotal or 0) end
+                end
             end
         end
-    end
-
-    for k,a in actors do
-        if (not a.isPet) or D.mode=="threat" then
-            local val
-            if D.mode=="damage" then val=(a.damage or 0)+(petTotals[a.key] or 0)
-            elseif D.mode=="healing" then val=(a.healing or 0)+(petTotals[a.key] or 0)
-            elseif D.mode=="threat" then val=D.threatValueForActor and D.threatValueForActor(a) or 0
-            elseif D.mode=="damageTaken" then val=a.damageTaken or 0
-            elseif D.mode=="deaths" then val=a.deaths or 0
-            elseif D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then val=D.auraEntryCount(a[D.mode])
-            else val=utilityTotal(a,D.mode) end
-            a._cawDisplayValue=val
-            if val>0 then n=n+1; list[n]=a end
+        for k,a in actors do
+            if not a.isPet or mode=="threat" then
+                local val
+                if mode=="damage" or mode=="healing" or mode=="overhealing" then val=(a[mode] or 0)+(petTotals[a.key] or 0)
+                elseif mode=="threat" then val=D.threatValueForActor and D.threatValueForActor(a) or 0
+                elseif mode=="damageTaken" or mode=="deaths" then val=a[mode] or 0
+                elseif mode=="buffs" or mode=="debuffsCast" or mode=="debuffsReceived" then val=D.auraEntryCount(a[mode])
+                else val=utilityTotal(a,mode) end
+                if val>0 then
+                    local gross=mode=="overhealing" and ((a.overhealTotal or 0)+(c.petGross[a.key] or 0)) or nil
+                    local row=c.byActor[a]
+                    if not row then row={actor=a}; c.byActor[a]=row; changed=true end
+                    if row.value~=val or row.name~=a.name or row.classToken~=a.classToken
+                        or row.key~=a.key or row.isPet~=a.isPet or row.isTotem~=a.isTotem or row.overhealTotal~=gross then changed=true end
+                    row.overhealTotal=gross
+                    row.value=val; row.name=a.name; row.classToken=a.classToken
+                    row.key=a.key; row.isPet=a.isPet; row.isTotem=a.isTotem; row.pass=c.pass
+                end
+            end
         end
+        for a,k in c.byActor do
+            if k.pass~=c.pass then c.byActor[a]=nil; changed=true end
+        end
+        if changed then
+            local n=0
+            for a,k in c.byActor do n=n+1; c.rows[n]=k end
+            for k=table.getn(c.rows),n+1,-1 do c.rows[k]=nil end
+            table.sort(c.rows,order)
+            for k=1,n do c.actorList[k]=c.rows[k].actor end
+            for k=table.getn(c.actorList),n+1,-1 do c.actorList[k]=nil end
+            c.revision=c.revision+1
+        end
+        return c.rows,table.getn(c.rows),c
     end
-
-    table.sort(list,function(x,y)
-        return (x._cawDisplayValue or 0)>(y._cawDisplayValue or 0)
-    end)
-    return list,n
+    function D.meterRowsUnchanged(f,c,duration,offset,mode,periodic)
+        if not c then f.cawRowsState=nil; return false end
+        local s=f.cawRowsState
+        if not s then s={}; f.cawRowsState=s end
+        local same=periodic and mode~="threat" and s.cache==c and s.revision==c.revision
+            and s.duration==duration and s.offset==offset and s.width==f:GetWidth() and s.height==f:GetHeight()
+        s.cache=c; s.revision=c.revision; s.duration=duration; s.offset=offset
+        s.width=f:GetWidth(); s.height=f:GetHeight()
+        return same
+    end
+end
+local function sortedActors()
+    local rows,n,c=D.meterSortedRows(getDisplayActors(),D.mode)
+    -- Preserve the primary meter/report API without sharing mutable display
+    -- values across modes. Extra windows consume their own row.value instead.
+    local i
+    for i=1,n do rows[i].actor._cawDisplayValue=rows[i].value end
+    return c.actorList,n,c
 end
 local function sortedTable(tbl,field)
     local list={}; local n=0; if not tbl then return list,0 end; local name,s
@@ -3123,7 +3248,7 @@ local function classColor(a)
     return 0.45,0.45,0.45
 end
 
-local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",threat="Threat",damageTaken="Damage Taken",deaths="Deaths",interrupts="Interrupts",cc="Crowd Control",ccBreaks="CC Breaks",dispels="Dispels",buffs="Buff Uptime",debuffsCast="Debuffs Cast",debuffsReceived="Debuffs Received"}
+local MODE_LABELS={damage="Damage / DPS",healing="Healing / HPS",overhealing="Overheal",threat="Threat",damageTaken="Damage Taken",deaths="Deaths",interrupts="Interrupts",cc="Crowd Control",ccBreaks="CC Breaks",dispels="Dispels",buffs="Buff Uptime",debuffsCast="Debuffs Cast",debuffsReceived="Debuffs Received"}
 
 -- UI -----------------------------------------------------------------------
 local frame=CreateFrame("Frame","CawDPSMeterWindow",UIParent); D.window=frame
@@ -3371,12 +3496,26 @@ local function shortFightName(name)
     return string.sub(name,1,14)..".."
 end
 
+function D.historyLabel(h,index,compact)
+    local name=h and h.name or "Unknown Enemy"
+    if compact then name=shortFightName(name) end
+    if h and type(h.startedAt)=="number" and type(date)=="function" then
+        if h.labelStartedAt~=h.startedAt then
+            h.startLabel=date("%H:%M:%S",math.floor(h.startedAt))
+            h.labelStartedAt=h.startedAt
+        end
+        return h.startLabel.." - "..name
+    end
+    -- Older/incomplete records have no trustworthy wall-clock start.
+    return (index and (tostring(index)..". ") or "")..name
+end
+
 local function selectedSegmentLabel()
     if D.mode=="threat" and D.segment=="current" and D.serverThreatTargetName then return shortFightName(D.serverThreatTargetName()) end
     if D.segment=="overall" then return "Overall" end
     if D.segment=="history" then
         local h=D.fightHistory[D.segmentIndex or 1]
-        if h then return shortFightName(h.name) end
+        if h then return D.historyLabel(h,nil,true) end
         return "Previous Fight"
     end
     local name=currentFightLabel()
@@ -3409,7 +3548,7 @@ local function buildSegmentItems()
     while i<=table.getn(D.fightHistory) and i<=10 do
         local h=D.fightHistory[i]
         segmentItemCount=segmentItemCount+1
-        segmentItems[segmentItemCount]={kind="history",index=i,label=tostring(i)..". "..shortFightName(h.name)}
+        segmentItems[segmentItemCount]={kind="history",index=i,label=D.historyLabel(h,i,true),fullLabel=D.historyLabel(h,i)}
         i=i+1
     end
     segmentItemCount=segmentItemCount+1
@@ -3461,6 +3600,7 @@ refreshSegmentMenu=function()
         if b and item then
             b.kind=item.kind
             b.historyIndex=item.index
+            b.cawSegmentFullLabel=item.fullLabel or item.label
             b.text:SetText(item.label)
             local active=(D.segment==item.kind and (item.kind~="history" or D.segmentIndex==item.index))
             if active then
@@ -3533,7 +3673,7 @@ segmentButton:SetScript("OnEnter",function() segmentButton:SetBackdropColor(0.14
 segmentButton:SetScript("OnLeave",function() segmentButton:SetBackdropColor(0.08,0.08,0.08,1) end)
 
 -- MODE_LABELS is declared once above the UI section.
-local MODE_ORDER={"damage","healing","threat","damageTaken","deaths","interrupts","cc","ccBreaks","dispels","buffs","debuffsCast","debuffsReceived"}
+local MODE_ORDER={"damage","healing","overhealing","threat","damageTaken","deaths","interrupts","cc","ccBreaks","dispels","buffs","debuffsCast","debuffsReceived"}
 local modeMenu
 
 local modeButton=CreateFrame("Button",nil,frame)
@@ -3833,6 +3973,7 @@ end
 function D.compactModeLabel()
     if D.mode=="damage" then return "DPS" end
     if D.mode=="healing" then return "HPS" end
+    if D.mode=="overhealing" then return "Overheal" end
     if D.mode=="threat" then return "Threat" end
     if D.mode=="damageTaken" then return "Taken" end
     if D.mode=="deaths" then return "Deaths" end
@@ -3982,10 +4123,9 @@ local MAX_ROWS=20
 local ROW_HEIGHT=23
 local ROW_STEP=26
 local LIST_TOP=29
-local SCROLL_W=12
 local i=1
 while i<=MAX_ROWS do
-    local rowFrame=CreateFrame("Frame",nil,frame); rowFrame:SetHeight(ROW_HEIGHT); rowFrame:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-LIST_TOP-((i-1)*ROW_STEP)); rowFrame:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-(8+SCROLL_W),-LIST_TOP-((i-1)*ROW_STEP))
+    local rowFrame=CreateFrame("Frame",nil,frame); rowFrame:SetHeight(ROW_HEIGHT); rowFrame:SetPoint("TOPLEFT",frame,"TOPLEFT",6,-LIST_TOP-((i-1)*ROW_STEP)); rowFrame:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-6,-LIST_TOP-((i-1)*ROW_STEP))
     flatPanel(rowFrame,0.055,0.055,0.055,0.96,0.16)
     local bar=CreateFrame("StatusBar",nil,rowFrame); bar:SetPoint("TOPLEFT",rowFrame,"TOPLEFT",1,-1); bar:SetPoint("BOTTOMRIGHT",rowFrame,"BOTTOMRIGHT",-1,1); bar:SetStatusBarTexture(FLAT_TEX); bar:SetMinMaxValues(0,1); bar:SetValue(0); bar:EnableMouse(true)
     if bar.EnableMouseWheel then bar:EnableMouseWheel(true) end
@@ -4271,7 +4411,7 @@ function D.reportSegmentName()
     if D.segment=="overall" then return "Overall" end
     if D.segment=="history" then
         local h=getSelectedHistoryFight()
-        if h and h.name and h.name~="" then return h.name end
+        if h and h.name and h.name~="" then return D.historyLabel(h) end
         return "Previous Fight"
     end
     local name=currentFightLabel()
@@ -4308,6 +4448,9 @@ function D.reportLineForActor(a,rank,dur)
         local value=actorDisplayHealing(a); local rate=0
         if dur>0 then rate=value/dur end
         return prefix..comma(value).." healing - "..string.format("%.1f",rate).." HPS"
+    elseif D.mode=="overhealing" then
+        local over,gross=D.overhealSummary(getDisplayActors(),a)
+        return prefix..comma(over).." overheal - "..D.overhealPercent(over,gross).." of recorded healing"
     elseif D.mode=="buffs" or D.mode=="debuffsCast" or D.mode=="debuffsReceived" then
         local value=utilityTotal(a,D.mode)
         return prefix..string.format("%.1fs",value).." - "..string.format("%.1f%%",auraAverageUptime(a,D.mode)).." uptime"
@@ -4317,6 +4460,7 @@ end
 
 function D.reportTotalLine(list,count,dur)
     local total=0; local i=1
+    if D.mode=="overhealing" then return D.overhealFooter(getDisplayActors()) end
     if D.mode=="damage" then
         while i<=count do total=total+actorDisplayDamage(list[i]); i=i+1 end
         local rate=0; if dur>0 then rate=total/dur end
@@ -4417,22 +4561,8 @@ local function visibleRowCount()
     return n
 end
 
--- Scroll controls. The row pool stays small, while the sorted actor list can
--- contain the full 40-player raid. Mouse wheel and the slim right-hand bar move
--- a window over that list.
-local scrollTrack=CreateFrame("Frame",nil,frame)
-scrollTrack:SetWidth(SCROLL_W); scrollTrack:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-3,-LIST_TOP); scrollTrack:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-3,28)
-local trackTex=scrollTrack:CreateTexture(nil,"BACKGROUND"); trackTex:SetAllPoints(scrollTrack); trackTex:SetTexture(FLAT_TEX); trackTex:SetVertexColor(0.10,0.10,0.10,0.95)
-local scrollThumb=scrollTrack:CreateTexture(nil,"ARTWORK"); scrollThumb:SetTexture(FLAT_TEX); scrollThumb:SetVertexColor(0.48,0.48,0.48,1); scrollThumb:SetWidth(SCROLL_W-2); scrollThumb:SetHeight(24); scrollThumb:SetPoint("TOP",scrollTrack,"TOP",0,0)
-
-local scrollUp=CreateFrame("Button",nil,frame); scrollUp:SetWidth(12); scrollUp:SetHeight(12); scrollUp:SetPoint("BOTTOM",scrollTrack,"TOP",0,2)
-flatPanel(scrollUp,0.06,0.06,0.06,1,0.22)
-local upText=scrollUp:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); upText:SetPoint("CENTER",scrollUp,"CENTER",0,0); upText:SetText("^")
-local scrollDown=CreateFrame("Button",nil,frame); scrollDown:SetWidth(12); scrollDown:SetHeight(12); scrollDown:SetPoint("TOP",scrollTrack,"BOTTOM",0,-2)
-flatPanel(scrollDown,0.06,0.06,0.06,1,0.22)
-local downText=scrollDown:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); downText:SetPoint("CENTER",scrollDown,"CENTER",0,0); downText:SetText("v")
-D.mainScroll={scrollTrack=scrollTrack,scrollBackground=trackTex,scrollThumb=scrollThumb,scrollUp=scrollUp,scrollDown=scrollDown}
-
+-- Mouse-wheel scrolling reuses the small row pool for the full raid list,
+-- without reserving a column for separate scroll controls.
 local function clampScroll(total)
     local maxOffset=total-visibleRowCount(); if maxOffset<0 then maxOffset=0 end
     if D.scrollOffset<0 then D.scrollOffset=0 end
@@ -4444,13 +4574,13 @@ local function scrollBy(delta)
     D.scrollOffset=D.scrollOffset+delta
     if D.scrollOffset<0 then D.scrollOffset=0 end
     if D.scrollOffset>maxOffset then D.scrollOffset=maxOffset end
+    if D.hideActorHover then D.hideActorHover() end
+    if playerTooltip then playerTooltip:Hide() end
     if updateUI then updateUI() end
 end
 D.scrollBy=scrollBy
-scrollUp:SetScript("OnClick",function() scrollBy(-1) end)
-scrollDown:SetScript("OnClick",function() scrollBy(1) end)
 
-local wheelArea=CreateFrame("Frame",nil,frame); wheelArea:SetPoint("TOPLEFT",frame,"TOPLEFT",4,-LIST_TOP); wheelArea:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-16,4); wheelArea:EnableMouse(true)
+local wheelArea=CreateFrame("Frame",nil,frame); wheelArea:SetPoint("TOPLEFT",frame,"TOPLEFT",4,-LIST_TOP); wheelArea:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-4,4); wheelArea:EnableMouse(true)
 D.mainWheelArea=wheelArea
 if wheelArea.EnableMouseWheel then wheelArea:EnableMouseWheel(true) end
 wheelArea:SetScript("OnMouseWheel",function() if arg1 and arg1>0 then scrollBy(-1) else scrollBy(1) end end)
@@ -4459,17 +4589,6 @@ frame:SetScript("OnMouseWheel",function() if arg1 and arg1>0 then scrollBy(-1) e
 -- Keep row frames above the mouse-wheel catcher so hover tooltips still work.
 if wheelArea.SetFrameLevel then wheelArea:SetFrameLevel(frame:GetFrameLevel()+1) end
 local ri=1; while ri<=MAX_ROWS do if D.rows[ri].frame.SetFrameLevel then D.rows[ri].frame:SetFrameLevel(frame:GetFrameLevel()+2) end; ri=ri+1 end
-
-local function updateScrollVisual(total)
-    local visible=visibleRowCount(); local maxOffset=clampScroll(total)
-    if total<=visible then scrollTrack:Hide(); scrollUp:Hide(); scrollDown:Hide(); return end
-    scrollTrack:Show(); scrollUp:Show(); scrollDown:Show()
-    local th=scrollTrack:GetHeight() or 100; if th<24 then th=24 end
-    local thumbH=math.floor(th*(visible/total)); if thumbH<18 then thumbH=18 end; if thumbH>th then thumbH=th end
-    scrollThumb:SetHeight(thumbH)
-    local travel=th-thumbH; local y=0; if maxOffset>0 then y=math.floor(travel*(D.scrollOffset/maxOffset)) end
-    scrollThumb:ClearAllPoints(); scrollThumb:SetPoint("TOP",scrollTrack,"TOP",0,-y)
-end
 
 -- Keep actor names from colliding with the numeric value at narrow widths.
 -- The right-hand value always wins; names are shortened with an ellipsis and
@@ -4488,6 +4607,7 @@ function D.setBarActorIcon(row)
         row.classIcon:SetTexture(D.petIconForActor(a))
         row.classIcon:SetTexCoord(0,1,0,1)
         row.lastClassToken="PET"
+        return true
     else
         local tc=a and a.classToken and CLASS_ICON_TCOORDS[a.classToken]
         row.lastClassToken=a and a.classToken
@@ -4495,12 +4615,14 @@ function D.setBarActorIcon(row)
             row.classIcon:SetTexture(CLASS_ICON_TEXTURE)
             row.classIcon:SetTexCoord(tc[1],tc[2],tc[3],tc[4])
         end
+        return tc~=nil
     end
 end
 
 function D.fitBarActorName(row,fullName,startPad)
     if not row or not row.left or not row.right or not row.bar then return end
     fullName=tostring(fullName or "")
+    if D.uiFitRowText then D.uiFitRowText(row,fullName); return end
     local bw=row.bar:GetWidth() or 0
     local rw=0
     if row.right.GetStringWidth then local ok,v=pcall(row.right.GetStringWidth,row.right); if ok and v then rw=v end end
@@ -4542,13 +4664,13 @@ function D.fitBarActorName(row,fullName,startPad)
     row.left:SetText("")
 end
 
-updateUI=function()
+updateUI=function(periodic)
     local layoutWidth=frame:GetWidth(); local layoutHeight=frame:GetHeight()
     if D.lastLayoutWidth~=layoutWidth or D.lastLayoutHeight~=layoutHeight then
         D.lastLayoutWidth=layoutWidth; D.lastLayoutHeight=layoutHeight
         if D.applyCompactWindowLayout then D.applyCompactWindowLayout() end
     end
-    local dur=getDuration(); local list,count=sortedActors(); local top=1
+    local dur=getDuration(); local list,count,cache=sortedActors(); local top=1
 
     if segmentText then segmentText:SetText(selectedSegmentLabel()) end
     if count>0 then top=list[1]._cawDisplayValue or 0 end; if top<=0 then top=1 end
@@ -4560,6 +4682,7 @@ updateUI=function()
     elseif D.mode=="healing" then
         local total=totalHealing(); local totalHPS=0; if dur>0 then totalHPS=total/dur end
         summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",totalHPS).." HPS")
+    elseif D.mode=="overhealing" then summary:SetText(D.overhealFooter(getDisplayActors()))
     elseif D.mode=="threat" then
         local targetName=D.threatDisplayTargetName and D.threatDisplayTargetName() or "Current Target"
         summary:SetText(D.segment=="current" and D.serverThreatLabel and D.serverThreatLabel() or tostring(targetName))
@@ -4581,15 +4704,17 @@ updateUI=function()
         end
     end
     if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(D.mainView) end
+    if D.meterRowsUnchanged(frame,cache,dur,D.scrollOffset,D.mode,periodic) then return end
     local displayTotal=0
     for _,actor in ipairs(list) do displayTotal=displayTotal+(actor._cawDisplayValue or 0) end
-    local rowsVisible=visibleRowCount(); clampScroll(count); updateScrollVisual(count)
+    local rowsVisible=visibleRowCount(); clampScroll(count)
     local r=1
     while r<=MAX_ROWS do
         local row=D.rows[r]; local absoluteIndex=D.scrollOffset+r; local a=nil
         if r<=rowsVisible then a=list[absoluteIndex] end
         if a then
             row.actor=a; row.frame:Show(); local value
+            row.overhealTotal=cache and cache.rows[absoluteIndex] and cache.rows[absoluteIndex].overhealTotal
             value=a._cawDisplayValue or 0
             row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value); local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
             row.rank:SetText(tostring(absoluteIndex).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
@@ -4698,7 +4823,7 @@ function D.multiViewSegmentLabel(v)
     if v.segment=="overall" then return "Overall" end
     if v.segment=="history" then
         local h=D.fightHistory[v.segmentIndex or 1]
-        if h then return shortFightName(h.name) end
+        if h then return D.historyLabel(h,nil,true) end
         return "Previous Fight"
     end
     local name=currentFightLabel()
@@ -4712,6 +4837,7 @@ function D.multiViewModeLabel(v)
     if w<360 then
         if v.mode=="damage" then return "DPS" end
         if v.mode=="healing" then return "HPS" end
+        if v.mode=="overhealing" then return "Overheal" end
         if v.mode=="threat" then return "Threat" end
         if v.mode=="damageTaken" then return "Taken" end
         if v.mode=="deaths" then return "Deaths" end
@@ -4727,37 +4853,7 @@ function D.multiViewModeLabel(v)
 end
 
 function D.multiViewSortedActors(v)
-    local list={}; local n=0; local k,a
-    local actors=D.multiViewActors(v)
-    local petTotals=nil
-    if v.mode=="damage" or v.mode=="healing" then
-        petTotals={}
-        for k,a in actors do
-            if a.isPet and a.ownerKey then
-                local pv=0
-                if v.mode=="damage" then pv=a.damage or 0 else pv=a.healing or 0 end
-                petTotals[a.ownerKey]=(petTotals[a.ownerKey] or 0)+pv
-            end
-        end
-    end
-    for k,a in actors do
-        if (not a.isPet) or v.mode=="threat" then
-            local val=0
-            if v.mode=="damage" then val=(a.damage or 0)+(petTotals[a.key] or 0)
-            elseif v.mode=="healing" then val=(a.healing or 0)+(petTotals[a.key] or 0)
-            elseif v.mode=="threat" then val=D.threatValueForActor and D.threatValueForActor(a) or 0
-            elseif v.mode=="damageTaken" then val=a.damageTaken or 0
-            elseif v.mode=="deaths" then val=a.deaths or 0
-            elseif v.mode=="buffs" or v.mode=="debuffsCast" or v.mode=="debuffsReceived" then val=D.auraEntryCount(a[v.mode])
-            else val=utilityTotal(a,v.mode) end
-            if val>0 then
-                n=n+1
-                list[n]={actor=a,value=val}
-            end
-        end
-    end
-    table.sort(list,function(x,y) return (x.value or 0)>(y.value or 0) end)
-    return list,n
+    return D.meterSortedRows(D.multiViewActors(v),v.mode)
 end
 
 function D.clampMultiWindow(f)
@@ -4881,7 +4977,7 @@ function D.multiReportSegmentName(v)
     if v.segment=="overall" then return "Overall" end
     if v.segment=="history" then
         local h=D.fightHistory[v.segmentIndex or 1]
-        if h and h.name and h.name~="" then return h.name end
+        if h and h.name and h.name~="" then return D.historyLabel(h) end
         return "Previous Fight"
     end
     local name=currentFightLabel()
@@ -4898,6 +4994,9 @@ function D.multiReportLine(v,item,rank,dur)
     elseif v.mode=="healing" then
         local rate=0; if dur>0 then rate=value/dur end
         return prefix..comma(value).." healing - "..string.format("%.1f",rate).." HPS"
+    elseif v.mode=="overhealing" then
+        local over,gross=D.overhealSummary(D.multiViewActors(v),a)
+        return prefix..comma(over).." overheal - "..D.overhealPercent(over,gross).." of recorded healing"
     elseif v.mode=="damageTaken" then return prefix..comma(value).." damage taken"
     elseif v.mode=="deaths" then
         local word="deaths"; if value==1 then word="death" end
@@ -4910,6 +5009,7 @@ end
 
 function D.multiReportTotalLine(v,list,count,dur)
     local total=0; local i=1
+    if v.mode=="overhealing" then return D.overhealFooter(D.multiViewActors(v)) end
     while i<=count do
         if v.mode=="buffs" or v.mode=="debuffsCast" or v.mode=="debuffsReceived" then total=total+utilityTotal(list[i].actor,v.mode)
         else total=total+(list[i].value or 0) end
@@ -4940,53 +5040,18 @@ end
 
 function D.scrollMultiWindow(v,delta)
     v.scrollOffset=(v.scrollOffset or 0)+delta
+    if D.hideActorHover then D.hideActorHover() end
+    if playerTooltip then playerTooltip:Hide() end
     D.updateMultiWindow(v)
 end
 
-function D.createMultiScroll(v)
-    local f=v.frame
-    v.scrollTrack=CreateFrame("Frame",nil,f)
-    v.scrollTrack:SetWidth(SCROLL_W)
-    v.scrollTrack:SetPoint("TOPRIGHT",f,"TOPRIGHT",-3,-LIST_TOP)
-    v.scrollTrack:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-3,28)
-    local bg=v.scrollTrack:CreateTexture(nil,"BACKGROUND"); bg:SetAllPoints(v.scrollTrack)
-    v.scrollBackground=bg
-    bg:SetTexture(FLAT_TEX); bg:SetVertexColor(0.10,0.10,0.10,0.95)
-    v.scrollThumb=v.scrollTrack:CreateTexture(nil,"ARTWORK")
-    v.scrollThumb:SetTexture(FLAT_TEX); v.scrollThumb:SetVertexColor(0.48,0.48,0.48,1)
-    v.scrollThumb:SetWidth(SCROLL_W-2); v.scrollThumb:SetHeight(24)
-    v.scrollUp=CreateFrame("Button",nil,f); v.scrollUp:SetWidth(12); v.scrollUp:SetHeight(12)
-    v.scrollUp:SetPoint("BOTTOM",v.scrollTrack,"TOP",0,2)
-    flatPanel(v.scrollUp,0.06,0.06,0.06,1,0.22)
-    local up=v.scrollUp:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    up:SetPoint("CENTER",v.scrollUp,"CENTER",0,0); up:SetText("^")
-    v.scrollDown=CreateFrame("Button",nil,f); v.scrollDown:SetWidth(12); v.scrollDown:SetHeight(12)
-    v.scrollDown:SetPoint("TOP",v.scrollTrack,"BOTTOM",0,-2)
-    flatPanel(v.scrollDown,0.06,0.06,0.06,1,0.22)
-    local down=v.scrollDown:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    down:SetPoint("CENTER",v.scrollDown,"CENTER",0,0); down:SetText("v")
-    v.scrollUp:SetScript("OnClick",function() D.scrollMultiWindow(v,-1) end)
-    v.scrollDown:SetScript("OnClick",function() D.scrollMultiWindow(v,1) end)
-end
-
-function D.updateMultiScroll(v,count,visible,maxOffset)
-    if not v.scrollTrack then return end
-    if count<=visible then v.scrollTrack:Hide(); v.scrollUp:Hide(); v.scrollDown:Hide(); return end
-    v.scrollTrack:Show(); v.scrollUp:Show(); v.scrollDown:Show()
-    local h=v.scrollTrack:GetHeight() or 100; if h<24 then h=24 end
-    local thumb=math.floor(h*visible/count); if thumb<18 then thumb=18 end; if thumb>h then thumb=h end
-    v.scrollThumb:SetHeight(thumb)
-    local y=0; if maxOffset>0 then y=math.floor((h-thumb)*v.scrollOffset/maxOffset) end
-    v.scrollThumb:ClearAllPoints(); v.scrollThumb:SetPoint("TOP",v.scrollTrack,"TOP",0,-y)
-end
-
-function D.updateMultiWindow(v)
+function D.updateMultiWindow(v,periodic)
     if not v or v.closed or not v.frame or not v.frame:IsShown() then return end
     local cw=v.frame:GetWidth() or 440; local ch=v.frame:GetHeight() or 260
     if v.lastLayoutWidth~=cw or v.lastLayoutHeight~=ch then D.layoutMultiWindow(v) end
     v.modeText:SetText(D.multiViewModeLabel(v))
     v.segmentText:SetText(D.multiViewSegmentLabel(v))
-    local list,count=D.multiViewSortedActors(v)
+    local list,count,cache=D.multiViewSortedActors(v)
 
     local dur=D.multiViewDuration(v)
     local top=1
@@ -4997,6 +5062,7 @@ function D.updateMultiWindow(v)
     if v.summary then
         if v.mode=="damage" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",rate).." DPS")
         elseif v.mode=="healing" then local rate=0; if dur>0 then rate=total/dur end; v.summary:SetText("Total: "..comma(total).." | "..string.format("%.1f",rate).." HPS")
+        elseif v.mode=="overhealing" then v.summary:SetText(D.overhealFooter(D.multiViewActors(v)))
         elseif v.mode=="threat" then local tn=D.threatDisplayTargetName and D.threatDisplayTargetName() or "Current Target"; v.summary:SetText(v.segment=="current" and D.serverThreatLabel and D.serverThreatLabel() or tostring(tn))
         elseif v.mode=="damageTaken" then v.summary:SetText("Total: "..comma(total))
         elseif v.mode=="deaths" then v.summary:SetText("Deaths: "..tostring(total))
@@ -5005,6 +5071,7 @@ function D.updateMultiWindow(v)
         else v.summary:SetText("Total: "..tostring(total)) end
     end
     if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(v) end
+    if D.meterRowsUnchanged(v.frame,cache,dur,v.scrollOffset,v.mode,periodic) then return end
     local h=v.frame:GetHeight() or 260
     local visible=D.uiVisibleRows and D.uiVisibleRows(v,v.frame) or math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if visible<1 then visible=1 end
@@ -5012,7 +5079,6 @@ function D.updateMultiWindow(v)
     local maxOffset=count-visible; if maxOffset<0 then maxOffset=0 end
     if v.scrollOffset<0 then v.scrollOffset=0 end
     if v.scrollOffset>maxOffset then v.scrollOffset=maxOffset end
-    D.updateMultiScroll(v,count,visible,maxOffset)
     local i=1
     while i<=20 do
         local row=v.rows[i]
@@ -5020,6 +5086,7 @@ function D.updateMultiWindow(v)
         if i<=visible then item=list[v.scrollOffset+i] end
         if item then
             local a=item.actor; local value=item.value or 0
+            row.overhealTotal=item.overhealTotal
             row.actor=a; row.frame:Show(); row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value)
             local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
             row.rank:SetText(tostring(v.scrollOffset+i).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
@@ -5063,7 +5130,7 @@ function D.createMultiWindow(saved)
         pf:SetScale(1); pf:SetWidth(savedWidth); pf:SetHeight(savedHeight); pf:ClearAllPoints()
         pf:SetPoint("CENTER",UIParent,"CENTER",tonumber(saved and saved.centerX) or (220+id*26),tonumber(saved and saved.centerY) or (-40-id*20))
         pf.nextUpdate=nil
-        pf:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(pooled) end end)
+        pf:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(pooled,true) end end)
         pf:Show(); D.clampMultiWindow(pf); D.applyMultiWindowLock(pooled); D.updateMultiWindow(pooled); D.updateMultiAddButtons()
         return pooled
     end
@@ -5152,14 +5219,19 @@ function D.createMultiWindow(saved)
     v.segmentMenu=CreateFrame("Frame",nil,f); v.segmentMenu:SetWidth(178); v.segmentMenu:SetPoint("TOPLEFT",v.segmentButton,"BOTTOMLEFT",0,-1); flatPanel(v.segmentMenu,0.025,0.025,0.025,0.99,0.28); v.segmentMenu.cawDropdown=true; v.segmentMenu:SetFrameStrata("DIALOG"); v.segmentMenu:SetFrameLevel(60); v.segmentMenu:Hide()
     function v.rebuildSegments()
         local items={}; local n=1; items[n]={kind="current",label="Current"}; local hi=1
-        while hi<=table.getn(D.fightHistory) and hi<=10 do n=n+1; items[n]={kind="history",index=hi,label=tostring(hi)..". "..shortFightName(D.fightHistory[hi].name)}; hi=hi+1 end
+        while hi<=table.getn(D.fightHistory) and hi<=10 do
+            local h=D.fightHistory[hi]; n=n+1
+            items[n]={kind="history",index=hi,label=D.historyLabel(h,hi,true),fullLabel=D.historyLabel(h,hi)}
+            hi=hi+1
+        end
         n=n+1; items[n]={kind="overall",label="Overall"}; v.segmentMenu:SetHeight((n*18)+8)
         local bi=1
         while bi<=12 do
             local b=v.segmentMenu.buttons and v.segmentMenu.buttons[bi] or nil
             if bi<=n then
                 if not b then b=CreateFrame("Button",nil,v.segmentMenu); b:SetHeight(18); b:SetPoint("TOPLEFT",v.segmentMenu,"TOPLEFT",4,-4-((bi-1)*18)); b:SetPoint("RIGHT",v.segmentMenu,"RIGHT",-4,0); b.text=b:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); b.text:SetPoint("LEFT",b,"LEFT",4,0); b:SetScript("OnClick",function() v.segment=this.kind; v.segmentIndex=this.historyIndex or 0; v.scrollOffset=0; v.segmentMenu:Hide(); D.updateMultiWindow(v); D.saveMultiWindows() end); v.segmentMenu.buttons=v.segmentMenu.buttons or {}; v.segmentMenu.buttons[bi]=b end
-                b.kind=items[bi].kind; b.historyIndex=items[bi].index; b.text:SetText(items[bi].label); b:Show()
+                b.kind=items[bi].kind; b.historyIndex=items[bi].index
+                b.cawSegmentFullLabel=items[bi].fullLabel or items[bi].label; b.text:SetText(items[bi].label); b:Show()
             elseif b then b:Hide() end
             bi=bi+1
         end
@@ -5171,7 +5243,7 @@ function D.createMultiWindow(saved)
 
     local ri=1
     while ri<=20 do
-        local rf=CreateFrame("Frame",nil,f); rf:SetHeight(ROW_HEIGHT); rf:SetPoint("TOPLEFT",f,"TOPLEFT",6,-LIST_TOP-((ri-1)*ROW_STEP)); rf:SetPoint("TOPRIGHT",f,"TOPRIGHT",-(8+SCROLL_W),-LIST_TOP-((ri-1)*ROW_STEP))
+        local rf=CreateFrame("Frame",nil,f); rf:SetHeight(ROW_HEIGHT); rf:SetPoint("TOPLEFT",f,"TOPLEFT",6,-LIST_TOP-((ri-1)*ROW_STEP)); rf:SetPoint("TOPRIGHT",f,"TOPRIGHT",-6,-LIST_TOP-((ri-1)*ROW_STEP))
         flatPanel(rf,0.055,0.055,0.055,0.96,0.16)
         local bar=CreateFrame("StatusBar",nil,rf); bar:SetPoint("TOPLEFT",rf,"TOPLEFT",1,-1); bar:SetPoint("BOTTOMRIGHT",rf,"BOTTOMRIGHT",-1,1); bar:SetStatusBarTexture(FLAT_TEX); bar:SetMinMaxValues(0,1); bar:SetValue(0)
         local bg=bar:CreateTexture(nil,"BACKGROUND"); bg:SetAllPoints(bar); bg:SetTexture(FLAT_TEX); bg:SetVertexColor(0.055,0.055,0.055,0.96)
@@ -5215,7 +5287,6 @@ function D.createMultiWindow(saved)
         ri=ri+1
     end
 
-    D.createMultiScroll(v)
     v.grip=CreateFrame("Button",nil,f); v.grip:SetWidth(24); v.grip:SetHeight(24); v.grip:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-1,1); v.grip:RegisterForDrag("LeftButton")
     local gs=v.grip:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); gs:SetPoint("BOTTOMRIGHT",v.grip,"BOTTOMRIGHT",-3,1); gs:SetText("/"); gs:SetTextColor(0.72,0.72,0.72)
     local gs2=v.grip:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); gs2:SetPoint("BOTTOMRIGHT",v.grip,"BOTTOMRIGHT",-7,1); gs2:SetText("/"); gs2:SetTextColor(0.72,0.72,0.72)
@@ -5224,7 +5295,7 @@ function D.createMultiWindow(saved)
     v.grip:SetScript("OnDragStop",function() f:StopMovingOrSizing(); D.clampMultiWindow(f); D.layoutMultiWindow(v); D.updateMultiWindow(v); D.saveMultiWindows() end)
     if f.EnableMouseWheel then f:EnableMouseWheel(true) end
     f:SetScript("OnMouseWheel",function() D.scrollMultiWindow(v,arg1 and arg1>0 and -1 or 1) end)
-    f:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(v) end end)
+    f:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(v,true) end end)
     D.clampMultiWindow(f); D.layoutMultiWindow(v); D.applyMultiWindowLock(v); D.updateMultiWindow(v)
     D.updateMultiAddButtons()
     return v
@@ -5289,7 +5360,7 @@ D.updateMultiAddButtons()
 frame:SetScript("OnUpdate",function()
     if not this.nextUpdate or GetTime()>=this.nextUpdate then
         this.nextUpdate=GetTime()+0.20
-        updateUI()
+        updateUI(true)
     end
 end)
 
@@ -5498,6 +5569,7 @@ events:SetScript("OnUpdate",function()
     if D.talentSyncTick then D.talentSyncTick(sendSyncNow,syncChannel()) end
     if D.talentViewTick then D.talentViewTick(sendSyncNow,syncChannel()) end
     if D.threatSyncTick then D.threatSyncTick(sendSyncNow,syncChannel()) end
+    if D.targetSyncTick then D.targetSyncTick(sendSyncNow,syncChannel()) end
     if not D.parserEnabled() then return end
     if D.inCombat and not D.syncRequested and D.combatSyncEnabled() and syncChannel()
         and GetTime()>=(D.nextCombatSyncCheck or 0) then
@@ -5628,7 +5700,7 @@ events:SetScript("OnEvent",function()
         if not D.inCombat or D.startTime==0 then
             resetFight()
             D.inCombat=true
-            D.startTime=GetTime()
+            D.setFightStartTime(GetTime())
             opened=true
         end
         if opened then
@@ -5848,7 +5920,7 @@ SlashCmdList["CAWDPS"]=function(msg)
     elseif msg=="current" then D.segment="current"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
     elseif msg=="last" then if D.fightHistory[1] then D.segment="history"; D.segmentIndex=1; D.scrollOffset=0; updateUI() end
     elseif msg=="overall" then D.segment="overall"; D.segmentIndex=0; D.scrollOffset=0; updateUI()
-    elseif msg=="damage" or msg=="healing" or msg=="damageTaken" or msg=="deaths" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
+    elseif msg=="damage" or msg=="healing" or msg=="overhealing" or msg=="damageTaken" or msg=="deaths" or msg=="interrupts" or msg=="cc" or msg=="ccBreaks" or msg=="dispels" or msg=="buffs" or msg=="debuffsCast" or msg=="debuffsReceived" then setMode(msg)
     elseif msg=="lock" then D.locked=true; saveWindowState(); applyWindowLock(); chat("Window locked.")
     elseif msg=="unlock" then D.locked=false; saveWindowState(); applyWindowLock(); chat("Window unlocked.")
     elseif msg=="history" then
@@ -5865,7 +5937,7 @@ SlashCmdList["CAWDPS"]=function(msg)
             end
             local dps=0
             if h and h.duration and h.duration>0 then dps=dmg/h.duration end
-            chat(tostring(i)..": "..tostring((h and h.name) or "Fight").." - "..comma(dmg).." dmg, "..comma(heal).." heal, "..string.format("%.1fs",(h and h.duration) or 0)..", "..string.format("%.1f DPS",dps))
+            chat(D.historyLabel(h,i).." - "..comma(dmg).." dmg, "..comma(heal).." heal, "..string.format("%.1fs",(h and h.duration) or 0)..", "..string.format("%.1f DPS",dps))
             i=i+1
         end
     else

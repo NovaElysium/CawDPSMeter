@@ -30,7 +30,8 @@ fire(D.events,"RAW_COMBATLOG","CHAT_MSG_COMBAT_SELF_HITS","You hit Other for 15.
 check(D.actors["0x1"].damage==25 and D.actors["0x1"].threat["0xF1"]==10,"unknown target does not reuse previous threat target")
 local v=D.createMultiWindow(nil)
 v.mode="damage"; v.segment="overall"; D.updateMultiWindow(v)
-check(v.modeText.text=="Damage / DPS" and v.segmentText.text=="Overall","extra labels update without resize")
+check((v.modeText.text=="Damage / DPS" or v.modeText.text=="DPS") and v.modeButton.cawMenuLabel=="Damage / DPS"
+    and v.segmentText.text=="Overall","extra labels update without resize and preserve full mode tooltip")
 local a={buffs={Renew={total=120,targets={x=120},active={}}}}
 check(string.find(D.multiReportTotalLine({mode="buffs"},{{actor=a,value=1}},1,120),"120.0s",1,true),"aura total reports seconds")
 a.name="Test"; D.lastDuration=10
@@ -599,7 +600,7 @@ D.multiViewSortedActors=function() return scrollList,table.getn(scrollList) end
 scrollView.frame:Show(); scrollView.frame:SetHeight(260); scrollView.mode='damage'; scrollView.scrollOffset=0
 D.updateMultiWindow(scrollView)
 check(scrollView.brand:IsShown() and scrollView.brand.kind=='Texture','watermark remains present as a noninteractive texture with player bars')
-check(scrollView.rows[1].frame:GetHeight()==D.rows[1].frame:GetHeight() and scrollView.scrollTrack:IsShown(),'extra window matches primary row height and displays overflow controls')
+check(scrollView.rows[1].frame:GetHeight()==D.rows[1].frame:GetHeight() and scrollView.frame:GetScript('OnMouseWheel'),'extra window matches primary row height and supports wheel scrolling')
 check(scrollView.rows[1].classIcon:IsShown() and scrollView.rows[1].classIcon:GetWidth()==18,'extra actor rows display class icons at primary dimensions')
 scrollList[1].actor.classToken=nil; D.updateMultiWindow(scrollView)
 check(not scrollView.rows[1].classIcon:IsShown(),'reused extra row hides stale icon for unknown class')
@@ -618,12 +619,15 @@ for height=110,700 do
 end
 check(footerSafe,'populated extra window keeps every player row above footer at all supported heights')
 scrollView.frame:SetHeight(260); D.updateMultiWindow(scrollView)
-D.scrollMultiWindow(scrollView,100)
+this=scrollView.frame; arg1=-1
+for i=1,100 do this:GetScript('OnMouseWheel')() end
 check(scrollView.scrollOffset==17 and scrollView.rows[8].actor.name=='Row25' and D.scrollOffset==primaryOffset,'extra scrolling reaches final actor and remains independent of primary')
+this=scrollView.rows[1].bar; arg1=1; this:GetScript('OnMouseWheel')()
+check(scrollView.scrollOffset==16 and scrollView.rows[1].actor.name=='Row17','mouse wheel over a player bar scrolls back through the list')
 scrollView.frame:SetHeight(600); D.updateMultiWindow(scrollView)
 check(scrollView.scrollOffset==5,'resizing reclamps extra window scroll offset')
 scrollList={scrollList[1],scrollList[2]}; D.updateMultiWindow(scrollView)
-check(scrollView.scrollOffset==0 and not scrollView.scrollTrack:IsShown() and not scrollView.scrollUp:IsShown(),'short lists reset offset and hide extra scroll controls')
+check(scrollView.scrollOffset==0 and scrollView.rows[1].actor.name=='Row1','short lists reset offset and keep the remaining actors reachable')
 scrollList={}; D.updateMultiWindow(scrollView)
 check(scrollView.brand:IsShown(),'empty view restores the watermark')
 D.multiViewSortedActors=oldSorted

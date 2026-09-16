@@ -103,7 +103,7 @@ check(c.cooldown==2 and input:GetText()=='2','invalid numeric input restores the
 local before=#sounds; click(p.threatTest)
 check(frame:IsShown() and #sounds==before,'Test warning previews only the enabled effects')
 D.openOptions(nil); check(D.threatAlertSettings()==c,'opening settings from another window keeps the same alert preferences')
-for _,f in ipairs(FRAMES) do if f.parent==p and f.kind=='Button' and f.text and type(f.text)=='table' and f.text:GetText()=='Defaults' then click(f); break end end
+for _,f in ipairs(FRAMES) do if f.parent==p and f.kind=='Button' and f.text and type(f.text)=='table' and f.text:GetText()=='Reset page' then click(f); break end end
 check(not D.threatAlertSettings().glow and not D.threatAlertSettings().sound and not frame:IsShown(),'Threat defaults reset only alert settings and stop the preview')
 p:Hide(); D.window:Show()
 UNITS=original.units; PARTY_COUNT=original.party; GetNumRaidMembers=original.raid; UnitAffectingCombat=original.combat

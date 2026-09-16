@@ -31,9 +31,31 @@ via SuperWoW, so it tracks combat events the default combat log never exposes, a
 it can pull data from other players running the addon to fill in what your client
 did not see. Up to four independent windows share the same combat data.
 
-## Interface in 1.1.2
+## Interface
 
 Left-click a player bar for an ability breakdown with player and segment selection.
+Scroll the player list with the mouse wheel anywhere over the bars or their
+surrounding area. Each meter window keeps its own scroll position.
+In player details, **Targets** groups damage by enemy; **Recipients** groups
+healing or overheal by recipient. Click a name to see the spells used on that
+target, click the same tab to return to the list, or choose **Spells** for the
+full breakdown. Owned pets and totems are included, with their spell rows kept
+separate. Same-name enemies remain separate targets.
+
+Target details require DPSLog recordings. Opening **Targets** or **Recipients**
+asks the selected player's updated Caw client for missing details when combat
+sync is enabled. Replies are paced and limited; complete views need no request,
+and leaving a view open does not create continuous sync. The footer shows how
+much of the full total has a recorded destination.
+
+Only a complete, matching owner snapshot can supplement the view. Observers'
+counts are never added together, and normal damage/healing totals are unchanged.
+Saved fights are matched by enemy GUIDs and relative combat times. **Overall**
+can request details for the individual fights still in the local history;
+unrelated session totals are never mixed. Older clients, unavailable fights or
+incomplete replies leave existing data intact. Overheal percentages always use
+amounts and measured healing coverage from the same observation.
+
 Use **Compare** in that view to compare two players of the same class, including
 their ability shares and the difference between both totals. The comparison
 temporarily replaces the detail window and restores it when closed.
@@ -41,6 +63,37 @@ Use the sliders icon (or **... > Settings** in a narrow window), right-click a p
 window scale, size, bar spacing, text, transparency and pfUI docking options.
 Each window has its own appearance. New windows fit five bars; existing layouts
 are kept. Overall contains completed fights and stays selected when combat starts.
+**Top bar** and **Bottom bar** set their own height, font size, colour and opacity;
+the bottom bar can be hidden. Expand **Buttons** on the Top bar page to change
+which buttons appear and on which side. Hidden actions stay available through
+**...**; this compact menu can also be selected for wide windows.
+**Player bars** and **Text** offer textures, upward growth, custom or class colours,
+four built-in fonts, outlines and shadows. Expand **Text position** for alignment
+and spacing. Each colour setting sits beside the element it changes.
+Use **Search settings** to find options across every page, including collapsed
+groups. Hover a control for an explanation. Greyed-out controls explain what
+needs to be enabled first. Recording and sync are under **Combat & sync**;
+warnings are under **Aggro alerts**, and chat/inventory options under **Docking & bags**.
+**Combat & sync** also shows the current local input (DPSLog, combat text,
+waiting for DPSLog, or paused) and a separate Caw Sync status. DPSLog remains
+optional. Sync can supply missing details from compatible peers, but does not
+guarantee complete coverage. These statuses describe recording now, not the
+source of every saved fight. Unrecorded overheal is shown as **Not available**;
+measured zero stays zero. Target views identify missing or partial coverage and
+retained details supplied through Caw Sync. Search for **DPSLog** to find the
+recording controls and status directly.
+For target-sync troubleshooting, `/cawsyncstatus` shows request/reply counters
+and the last result from this session, or the last saved session after reload.
+`CawDPSMeterErrorLog.targetSync` in Caw's account-wide SavedVariables keeps three
+active sessions with at most 24 recent results per session. It records timeouts,
+unsupported peers, incomplete/invalid replies and interruptions without storing
+packet payloads or player names and without sending extra messages. A complete
+reply does not guarantee complete combat coverage. `/cddebug clear` clears these
+diagnostics together with the existing error log.
+Longer pages scroll. Changes are saved automatically. The colour picker previews
+changes immediately; Cancel restores the previous colour. **Reset page** restores
+only that page's defaults. **Copy to all windows** copies the selected window's
+full appearance and display options to every meter.
 Meters use near-black pfUI-style surfaces, fine borders and muted gold highlights.
 Dropdown labels use larger, bright text; window transparency remains adjustable.
 Settings use sliders, number fields and checkboxes, with a preview and a window
@@ -50,6 +103,9 @@ are available through their header buttons or the **...** menu in narrow windows
 Small meters keep just the mode, encounter selector and **...** in the header.
 Encounter menus fit their entries; scrolling controls appear above and below the
 list only when needed. Hover a selector to read the full selected label.
+Finished fights are labelled by their local pull time (`HH:MM:SS`) so repeated
+enemy names are easy to distinguish. Reports use the same time; combat sync
+exchanges fight age, so players in other time zones see their own local time.
 Very narrow player bars show a shortened amount (Threat shows its percentage)
 to preserve player names. Widening the meter restores your rate/share settings.
 Hover or open player details for the full data.
@@ -76,20 +132,8 @@ state, rather than repeating continuously, and apply to your character across
 all windows. The updated 1.1.1 download includes these controls; existing 1.1.1
 users can replace the files and `/reload`.
 
-The optional DPSLog backend needs a compatible DLL installed separately — we recommend
-**[DPSLog Community Edition](https://github.com/NovaElysium/DPSLog-Community)**, a
-community-maintained continuation of the original (no longer active) DPSLog module.
-It fixes a compiler bug that broke the original build and swaps native event delivery
-for a polling API, so it actually works in-game. With it installed, Caw gets:
-
-- **Overheal-corrected healing** (impossible to derive from raw combat text)
-- **Reliable dispel tracking**, including self-dispels, without text-pattern guessing
-- More accurate damage/healing numbers generally, since they come from structured
-  game data instead of parsed chat lines
-
-Caw auto-detects it at login and falls back to raw combat-text parsing if it isn't
-present — it's a drop-in upgrade, not a hard requirement. Collection and talent sync
-continue independently of the visible UI either way. See
+The optional DPSLog backend needs a compatible DLL installed separately. Collection
+and talent sync continue independently of the visible UI. See
 [1.1.1 release notes](RELEASE_NOTES_1.1.1.md) for available statistics and validation.
 
 If you use a bag addon other than Bagshui, enable **Settings > pfUI > Keep Caw
@@ -100,6 +144,11 @@ option is off by default so Caw remains fully interactive in the normal layout.
 
 - **Damage & DPS** and **Healing & HPS**, with per-spell breakdown; pet damage
   and healing fold into the owner, totem damage is attributed to the caster
+- **Overheal** amounts and percentages, with hover bars, spell details, reports
+  and same-class comparisons. Requires measured DPSLog healing, recorded locally
+  or received through Caw Sync. Percentages use total healing before overheal is
+  subtracted. Only events with recorded overheal are included; older combat
+  records without it cannot be reconstructed.
 - **Damage taken** and **Deaths** with killing-blow detail
 - **Utility modes:** interrupts, crowd control, CC breaks (with the breaking
   ability and its damage), dispels, buff uptime, debuffs cast, debuffs received
@@ -129,7 +178,6 @@ option is off by default so Caw remains fully interactive in the normal layout.
 | WoW 1.12 client | RavenCraft / OctoWoW / Vanilla private servers |
 | [SuperWoW](https://github.com/balakethelock/SuperWoW) | client mod, provides `RAW_COMBATLOG` |
 | [SuperAPI](https://github.com/balakethelock/SuperAPI) | addon dependency (declared in the `.toc`) |
-| [DPSLog Community Edition](https://github.com/NovaElysium/DPSLog-Community) | *optional* — structured combat data instead of text parsing; see above |
 
 Without SuperWoW loaded the meter will not receive raw combat data.
 
@@ -280,7 +328,7 @@ For a fight that ends late, merges with another, or shows wrong numbers:
 
 The log records only the combat-end lifecycle and is off unless you turn it on.
 
-See [CHANGELOG.md](CHANGELOG.md) and the [1.1.3 release notes](RELEASE_NOTES_1.1.3.md)
+See [CHANGELOG.md](CHANGELOG.md) and the [1.1.2 release notes](RELEASE_NOTES_1.1.2.md)
 for the full change list and known limits. The regression suite uses mocked WoW
 APIs; a live client is still needed for visual and multiplayer verification.
 

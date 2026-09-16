@@ -3,6 +3,88 @@
 This project loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.1.4] - 2026-09-16
+
+### Fixed
+- Overall aggregation retains spell IDs as identifiers instead of adding them
+  when the same spell appears in multiple fights.
+- Player bars measure the full value text before sizing its column, with space
+  for font rounding and shadows. DPS/HPS no longer stays clipped after widening
+  a window when the bar has enough room for both values.
+- Settings popups raise their entire frame tree, including pfUI colour-picker
+  backgrounds, sliders and confirmation buttons. The colour picker opens over
+  Settings, fits on screen and restores its original layout when closed so other
+  addons can reuse it. Dropdowns and window selection close competing popups.
+
+### Added
+- Persistent target-sync diagnostics record requests, complete replies and
+  failure/cancellation reasons across reloads. `/cawsyncstatus` shows the current
+  or last saved session. Storage is limited to three active sessions with 24
+  recent results each, without message payloads or player names. No additional
+  network traffic is generated.
+- Live recording-source and Caw Sync status in Combat & sync, including pending
+  DPSLog detection, combat-text fallback and paused recording. Status replaces
+  the existing sidebar note without enlarging Settings and is searchable via
+  DPSLog. Missing overheal is explicitly unavailable; measured zero remains
+  zero. Target views label partial coverage and retained Caw Sync details.
+- Missing target/recipient details are requested on demand from the selected
+  player's compatible Caw client. Complete snapshots supplement the view without
+  merging observers' counts or changing combat totals. Saved fights match by
+  GUID and relative time; late details update their Overall contribution once.
+  Requests respect parser/sync controls and capability checks; replies are
+  paced, bounded and discarded if incomplete, stale or from the wrong source.
+- Targets and Recipients tabs in player details, with searchable destination
+  bars and a click-through spell breakdown. DPSLog records damage, effective
+  healing and measured overheal per destination, including owned pets and
+  totems. Same-name enemies stay separate. History and Overall retain these
+  recorded counters; the footer shows coverage against the player's full total.
+- Overheal view with per-player and per-spell amounts and percentages, hover
+  bars, details, reports and same-class comparisons. It uses measured DPSLog
+  overheal, including fully overhealed casts and owned pets. Percentages divide
+  overheal by total healing for measured events; older records without these
+  values remain unavailable. Compatible Caw clients share the new fields through
+  existing healing snapshots without increasing sync frequency.
+- Finished fights show their pull time in local `HH:MM:SS` instead of a moving
+  history number. Segment menus, selected views, player details/comparison and
+  reports use the same timestamp. Sync still exchanges fight age, so each client
+  displays its own local time; earlier synced starts correct the timestamp.
+- Settings search across all pages, including collapsed options. Short hover
+  explanations and visible units clarify what each control does.
+- Per-window font selection, outlines, text shadows, name alignment, padding,
+  column spacing and vertical text positioning. Text stays within its bar.
+- Flat or Blizzard bar textures, class or custom bar colours, upward-growing
+  bars, and separate window, border, header, footer, row, text and shadow colours.
+- Header button visibility and left/right placement, with hidden actions kept
+  in the actions menu. The compact actions menu can also be used in wide windows.
+- Scrollable settings pages and native colour selection with live preview and
+  cancellation. Appearance sections have their own defaults; copying settings
+  between windows includes independent copies of all colours.
+- Separate Header and Footer settings for per-window height, text size and
+  background opacity, plus an option to hide the footer. Changes update the
+  preview, row capacity, scroll controls and minimum size together.
+- Header/Footer defaults reset only that section. Copy to all windows includes
+  the new appearance settings; existing windows keep their previous dimensions.
+
+### Changed
+- Meter lists scroll with the mouse wheel over bars or their surrounding area.
+  Removed the separate right-hand scroll controls and widened the player bars;
+  windows without a footer retain clearance for the resize corner.
+- Meter windows share sorted results for the same combat data and mode. Timer
+  refreshes reuse unchanged bars and detail lists; live rates, aura durations,
+  server threat and late sync corrections continue to update. Cache data stays
+  outside recorded fights and saved variables.
+- DPSLog keeps diagnostic event counters current without allocating a new
+  status table per event. Full metadata refreshes on status changes, errors,
+  the periodic check and logout.
+- Settings now follow the visible parts of the meter: Window, Player bars, Text,
+  Top bar and Bottom bar. Colours sit beside the elements they change. Button
+  details, exact height and text positioning can be expanded when needed.
+- Unavailable appearance controls explain which option enables them. Reset page
+  restores only that page, including recording preferences and window dimensions
+  where applicable. Shared recording and warning options are labelled clearly.
+
 ## [1.1.3] - 2026-09-13
 
 ### Changed

@@ -13,7 +13,7 @@ function D.threatPeerReceive(sender,p,channel)
     if p[2]~="1" or not p[3] or not D.threatPeerUnit(p[3],sender) then return end
     if not p[4] or string.len(p[4])>40 or not string.find(p[4],"^[%w%.%-]+$") then return end
     if p[5]~="fi1" and p[5]~="none" then return end
-    D.threatSyncPeers[p[3]]={name=sender,version=p[4],capability=p[5],talentLayouts=p[6]=="layout1",time=GetTime()}
+    D.threatSyncPeers[p[3]]={name=sender,version=p[4],capability=p[5],talentLayouts=p[6]=="layout1",targetDetails=p[7]=="targets1",time=GetTime()}
     if p[5]=="none" then D.threatSyncTalents[p[3]]=nil end
 end
 
@@ -42,7 +42,7 @@ function D.threatPeerTick(send,channel)
     local exists,pg=UnitExists("player")
     if not exists or not pg then return end
     local _,class=UnitClass("player")
-    local msg="P~1~"..pg.."~"..D.threatModelVersion.."~"..(class=="DRUID" and "fi1" or "none").."~layout1"
+    local msg="P~1~"..pg.."~"..D.threatModelVersion.."~"..(class=="DRUID" and "fi1" or "none").."~layout1~targets1"
     if send(msg,channel) then D.threatPeerLastChannel=channel; D.threatPeerLastSent=now end
 end
 
@@ -59,14 +59,14 @@ function D.threatSyncReceive(sender,p,channel)
     if p[4]=="unknown" then
         D.threatSyncTalents[p[3]]=nil
         local peer=D.threatSyncPeers[p[3]]
-        D.threatSyncPeers[p[3]]={name=sender,version=peer and peer.version,talentLayouts=peer and peer.talentLayouts,capability="fi1",time=GetTime()}
+        D.threatSyncPeers[p[3]]={name=sender,version=peer and peer.version,talentLayouts=peer and peer.talentLayouts,targetDetails=peer and peer.targetDetails,capability="fi1",time=GetTime()}
         return
     end
     local rank,maxRank=tonumber(p[4]),tonumber(p[5])
     if not rank or (maxRank~=3 and maxRank~=5) or rank<0 or rank>maxRank or rank~=math.floor(rank) then return end
     D.threatSyncTalents[p[3]]={name=sender,rank=rank,maxRank=maxRank,time=GetTime()}
     local peer=D.threatSyncPeers[p[3]]
-    D.threatSyncPeers[p[3]]={name=sender,version=peer and peer.version,talentLayouts=peer and peer.talentLayouts,capability="fi1",time=GetTime()}
+    D.threatSyncPeers[p[3]]={name=sender,version=peer and peer.version,talentLayouts=peer and peer.talentLayouts,targetDetails=peer and peer.targetDetails,capability="fi1",time=GetTime()}
 end
 
 function D.threatSyncedFeralInstinct(actor)

@@ -62,7 +62,7 @@ if args.sync_checkout and (checkout / '.git').is_dir():
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(public_bytes(name))
     for src in (ROOT / 'tests').iterdir():
-        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'ui_regressions.lua', 'ui_release_regressions.lua', 'threat_alert_regressions.lua', 'parser_control_regressions.lua', 'benchmark_raw_parser.py', 'RAW_PARSER_PERFORMANCE.md'):
+        if src.name in ('run_regressions.py', 'regressions.lua', 'mock_wow.lua', 'build_release.py', 'run_sync_integration.py', 'run_target_sync.py', 'ui_regressions.lua', 'ui_release_regressions.lua', 'threat_alert_regressions.lua', 'parser_control_regressions.lua', 'window_customization_regressions.lua', 'appearance_regressions.lua', 'settings_usability_regressions.lua', 'settings_popup_regressions.lua', 'display_performance_regressions.lua', 'segment_timestamp_regressions.lua', 'overheal_regressions.lua', 'target_breakdown_regressions.lua', 'data_source_regressions.lua', 'benchmark_display.py', 'DISPLAY_PERFORMANCE.md', 'benchmark_raw_parser.py', 'RAW_PARSER_PERFORMANCE.md'):
             dst = checkout / 'tests' / src.name
             dst.parent.mkdir(exist_ok=True)
             shutil.copyfile(src, dst)

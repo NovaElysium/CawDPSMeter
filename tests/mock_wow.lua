@@ -75,7 +75,18 @@ function methods:GetText() return self.text end
 function methods:Enable() self.enabled=true end
 function methods:Disable() self.enabled=false end
 function methods:IsEnabled() return self.enabled~=false end
-function methods:SetFont(path,size) self.fontPath=path; self.fontSize=size end
+function methods:SetFont(path,size,flags) self.fontPath=path; self.fontSize=size; self.fontFlags=flags end
+function methods:SetTextColor(...) self.textColour=arg end
+function methods:SetVertexColor(...) self.vertexColour=arg end
+function methods:SetStatusBarColor(...) self.barColour=arg end
+function methods:SetStatusBarTexture(path) self.barTexture=path end
+function methods:SetShadowColor(...) self.shadowColour=arg end
+function methods:SetShadowOffset(...) self.shadowOffset=arg end
+function methods:SetJustifyH(value) self.justify=value end
+function methods:SetScrollChild(child)
+    self.scrollChild=child; child:SetPoint('TOPLEFT',self,'TOPLEFT',0,0)
+end
+function methods:SetVerticalScroll(value) self.scrollOffset=value end
 function methods:SetBackdrop(v) self.backdrop=v end
 function methods:SetBackdropColor(...) self.backdropColor=arg end
 function methods:SetBackdropBorderColor(...) self.borderColor=arg end
