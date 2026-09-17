@@ -46,3 +46,4 @@ lua.execute((ROOT / 'tests/segment_timestamp_regressions.lua').read_text(encodin
 lua.execute((ROOT / 'tests/overheal_regressions.lua').read_text(encoding='utf-8'))
 lua.execute((ROOT / 'tests/target_breakdown_regressions.lua').read_text(encoding='utf-8'))
 lua.execute((ROOT / 'tests/data_source_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/window_state_regressions.lua').read_text(encoding='utf-8'))

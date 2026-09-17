@@ -8,6 +8,11 @@ and [Semantic Versioning](https://semver.org/).
 ## [1.1.4] - 2026-09-16
 
 ### Fixed
+- Restore window scale before positioning and screen-edge checks. Small windows
+  near an edge no longer drift inward after a reload, including extra windows.
+- Reopening a closed extra window restores its position, size and settings.
+  Add window reopens the most recently closed meter; `/cd show` restores closed
+  meters together. Closed extra meters stay closed on login or reload.
 - Overall aggregation retains spell IDs as identifiers instead of adding them
   when the same spell appears in multiple fights.
 - Player bars measure the full value text before sizing its column, with space
@@ -19,6 +24,10 @@ and [Semantic Versioning](https://semver.org/).
   addons can reuse it. Dropdowns and window selection close competing popups.
 
 ### Added
+- Per-window automatic hiding for solo play, parties, raids, battlegrounds, in
+  combat and out of combat under Settings > Window. Battlegrounds use their own
+  group rule; combat rules apply alongside it. Hidden windows keep their settings
+  and combat recording continues; pfUI chat visibility still applies.
 - Persistent target-sync diagnostics record requests, complete replies and
   failure/cancellation reasons across reloads. `/cawsyncstatus` shows the current
   or last saved session. Storage is limited to three active sessions with 24

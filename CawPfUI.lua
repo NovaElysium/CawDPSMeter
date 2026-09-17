@@ -47,8 +47,9 @@ function D.pfDockDetach(f)
     D.pfDockLayerTree(f,20,"HIGH")
     f:SetParent(UIParent); f:ClearAllPoints()
     if D.uiAnchorCenter then D.uiAnchorCenter(f,pos.x,pos.y) else f:SetPoint("CENTER",UIParent,"CENTER",pos.x,pos.y) end
-    if pos.hiddenByDock then f:Show() end
     f.cawDockFree=nil
+    if D.uiApplyMeterVisibility then D.uiApplyMeterVisibility(f)
+    elseif pos.hiddenByDock then f:Show() end
 end
 
 function D.pfDockToggle(v)
@@ -115,7 +116,10 @@ function D.pfDockPlace(f,enabled,target,previous)
     local showDocked=target:IsVisible()
     if showDocked and target.GetAlpha and target:GetAlpha()==0 then showDocked=false end
     if CawDPSMeterCharDB and CawDPSMeterCharDB.pfDockAlternate then showDocked=not showDocked end
-    if showDocked then
+    if D.uiApplyMeterVisibility then
+        pos.hiddenByDock=not showDocked or nil
+        D.uiApplyMeterVisibility(f)
+    elseif showDocked then
         if pos.hiddenByDock then pos.hiddenByDock=nil; f:Show() end
     elseif f:IsShown() then pos.hiddenByDock=true; f:Hide() end
     local inset=0; local panelAttached=false
@@ -141,7 +145,7 @@ function D.pfDockPlace(f,enabled,target,previous)
         -- pfUI draws its border outside this frame; its edge is the interior edge.
         f:SetPoint("BOTTOMRIGHT",target,"BOTTOMRIGHT",0,inset)
     end
-    if f:IsShown() or pos.hiddenByDock then return f end
+    if not f.cawManuallyHidden and not f.cawHiddenByContext and (f:IsShown() or pos.hiddenByDock) then return f end
     return previous
 end
 
@@ -167,6 +171,7 @@ end
 function D.pfDockUpdate()
     if not D.savedVariablesReady or not D.window or not D.multiWindowsRestored then return end
     D.pfDockMigrate()
+    if D.uiUpdateVisibility then D.uiUpdateVisibility() end
     local target=pfUI and pfUI.chat and pfUI.chat.right
     local offset=nil
     D.pfDockButton(D.mainLockButton,nil)

@@ -6,7 +6,9 @@ D.uiFont=FONT
 D.uiAccent={0.72,0.64,0.43}
 D.uiDefaults={scale=1,rowHeight=23,rowGap=3,fontSize=11,opacity=0.94,barOpacity=0.85,
     watermark=0.40,icons=true,ranks=true,classNames=false,rate=true,percent=false,
-    autoCurrent=false,hover=true,headerHeight=24,headerFontSize=11,headerOpacity=1,
+    autoCurrent=false,hover=true,hideSolo=false,hideParty=false,hideRaid=false,hideBattleground=false,
+    hideInCombat=false,hideOutOfCombat=false,
+    headerHeight=24,headerFontSize=11,headerOpacity=1,
     footerHeight=20,footerFontSize=9,footerOpacity=0.94,showFooter=true,
     fontFace=1,fontOutline=1,textShadow=true,nameAlign=1,namePadding=7,valuePadding=6,columnGap=10,textOffset=0,
     barTexture=1,classBars=true,growUp=false,buttonSide=1,alwaysOverflow=false,
@@ -64,6 +66,53 @@ function D.uiSettings(v)
     end
     if not D.appearance then D.appearance=D.uiCopySettings(CawDPSMeterDB and CawDPSMeterDB.appearance) end
     return D.appearance
+end
+-- Visibility only affects the meter frames. Recording and sync keep running.
+-- Battlegrounds have their own rule, even when their roster is a raid.
+function D.uiDetectGroupContext()
+    if IsInInstance then
+        local inside,kind=IsInInstance()
+        if inside and kind=="pvp" then return "hideBattleground" end
+    end
+    if GetBattlefieldStatus then
+        for i=1,(MAX_BATTLEFIELD_QUEUES or 3) do
+            if GetBattlefieldStatus(i)=="active" then return "hideBattleground" end
+        end
+    end
+    if GetNumRaidMembers and GetNumRaidMembers()>0 then return "hideRaid" end
+    if GetNumPartyMembers and GetNumPartyMembers()>0 then return "hideParty" end
+    return "hideSolo"
+end
+function D.uiApplyMeterVisibility(f)
+    if not f then return end
+    local v=f.cawThemeView
+    local hidden=f.cawManuallyHidden or f.cawHiddenByContext or (v and v.closed)
+        or (f.cawDockFree and f.cawDockFree.hiddenByDock)
+    f.cawApplyingVisibility=true
+    if hidden then
+        if f:IsShown() then f:Hide() end
+    elseif not f:IsShown() then f:Show() end
+    f.cawApplyingVisibility=nil
+end
+function D.uiUpdateWindowVisibility(v)
+    if not v or v.closed then return end
+    if not D.uiGroupContext then D.uiGroupContext=D.uiDetectGroupContext() end
+    if D.uiPlayerInCombat==nil then D.uiPlayerInCombat=UnitAffectingCombat and UnitAffectingCombat("player") and true or false end
+    local s=D.uiSettings(v)
+    v.frame.cawHiddenByContext=(s[D.uiGroupContext] or (D.uiPlayerInCombat and s.hideInCombat)
+        or (not D.uiPlayerInCombat and s.hideOutOfCombat)) and true or nil
+    D.uiApplyMeterVisibility(v.frame)
+end
+function D.uiUpdateVisibility()
+    if not D.savedVariablesReady then return end
+    D.uiUpdateWindowVisibility(D.mainView)
+    for i=2,D.multiWindowMax do D.uiUpdateWindowVisibility(D.multiWindows[i]) end
+end
+function D.uiSetMeterShown(f,shown)
+    -- Also remember a manual hide when the window is already auto-hidden.
+    f.cawManuallyHidden=not shown or nil
+    if f.cawThemeView then D.uiUpdateWindowVisibility(f.cawThemeView)
+    else D.uiApplyMeterVisibility(f) end
 end
 -- Keep rows, scrolling and exact row fitting on the same content rectangle.
 function D.uiWindowInsets(v)
@@ -312,7 +361,7 @@ function D.uiEnsureOverflowButton(v)
     menu:SetWidth(124); menu:SetHeight(140); menu:SetPoint("TOPRIGHT",b,"BOTTOMRIGHT",0,-2)
     menu.cawDropdown=true; menu:SetFrameStrata("DIALOG"); menu:SetFrameLevel(60); menu:EnableMouse(true)
     menu.buttons={}; menu.cawOverflowView=v
-    for i,entry in ipairs({{"options","Settings"},{"add","New window"},{"report","Report"},{"reset","Reset"},{"lock","Lock"},{"close","Close"}}) do
+    for i,entry in ipairs({{"options","Settings"},{"add","Add window"},{"report","Report"},{"reset","Reset"},{"lock","Lock"},{"close","Close"}}) do
         local item=D.uiListButton(menu,4,-4-(i-1)*22,116,function()
             local item=this; local view=item.cawOverflowView
             D.uiCloseMeterMenus(view)
@@ -551,11 +600,19 @@ function D.uiStyleMeterShell(v,s)
         v.footerHandle=CreateFrame("Frame",nil,f); v.footerHandle:SetHeight(18)
         v.footerHandle:SetPoint("BOTTOMLEFT",f,"BOTTOMLEFT",3,1); v.footerHandle:EnableMouse(true)
         D.uiAttachMeterDrag(v.footerHandle,v,false)
-        f.cawThemeView=v; f.cawMeterOnHide=f:GetScript("OnHide")
+        f.cawThemeView=v; f.cawMeterOnHide=f:GetScript("OnHide"); f.cawMeterOnShow=f:GetScript("OnShow")
         f:SetScript("OnHide",function()
             local window=this; D.uiCloseMeterMenus(window.cawThemeView)
+            if not window.cawApplyingVisibility then window.cawManuallyHidden=true end
             D.uiStopMeterDrag(window.cawDragHandle)
             if window.cawMeterOnHide then window.cawMeterOnHide() end
+        end)
+        f:SetScript("OnShow",function()
+            local window=this
+            if not window.cawApplyingVisibility then
+                window.cawManuallyHidden=nil; D.uiUpdateWindowVisibility(window.cawThemeView)
+            end
+            if window.cawMeterOnShow then window.cawMeterOnShow() end
         end)
     end
     f:SetBackdropColor(s.windowColour[1],s.windowColour[2],s.windowColour[3],s.opacity)
@@ -728,6 +785,7 @@ function D.uiPersist()
 end
 function D.uiRefresh(v)
     if v then D.layoutMultiWindow(v) else D.applyCompactWindowLayout() end
+    D.uiUpdateVisibility()
     D.uiRefreshMeters(); if D.pfDockUpdate then D.pfDockUpdate() end
     if D.pfBagLayerTick then D.pfBagLayerTick() end
     D.uiPersist()
@@ -736,7 +794,7 @@ end
 local pages={"Window","Bars","Text","Header","Footer","General","Threat","pfUI"}
 local pageLabels={Window="Window",Bars="Player bars",Text="Text",Header="Top bar",Footer="Bottom bar",
     General="Combat & sync",Threat="Aggro alerts",pfUI="Docking & bags"}
-local descriptions={Window="Resize the meter and change its background.",Bars="Change the size and appearance of player bars.",
+local descriptions={Window="Choose the size, background and when this window is shown.",Bars="Change the size and appearance of player bars.",
     Text="Choose the font and the numbers shown on each bar.",Header="Customize the top bar and its buttons.",
     Footer="Customize the bottom bar that shows your totals.",General="Choose how combat is recorded and shared.",
     Threat="Get a warning when you are close to pulling aggro.",pfUI="Fit Caw around your chat and inventory windows."}
@@ -749,6 +807,13 @@ optionsGroup("Window","Size",false,{
     {"scale","Window scale",0.05,"number","Makes the whole meter larger or smaller. 100% is the original size."},
     {"width","Window width",1,"size"},{"rows","Number of bars",1,"rows","Resizes the window to fit this many player bars, including the top and bottom bars."},
     {"locked","Lock window in place",0,"lock","Prevents moving or resizing this window."}})
+optionsGroup("Window","Automatically hide",false,{
+    {"hideSolo","When solo",0,"bool","Hides this window when you are not in a party or raid. Combat recording and sync continue. Use /cawoptions to change this while hidden."},
+    {"hideParty","In a party",0,"bool","Hides this window in a party, including dungeons. Raids and battlegrounds use their own settings."},
+    {"hideRaid","In a raid",0,"bool","Hides this window in a raid group outside battlegrounds."},
+    {"hideBattleground","In a battleground",0,"bool","Hides this window inside a battleground. This rule replaces the solo, party and raid rules there; joining the queue does not hide it."},
+    {"hideInCombat","In combat",0,"bool","Hides this window while your character is in combat. Applies in addition to the group rules. Combat recording and sync continue."},
+    {"hideOutOfCombat","Out of combat",0,"bool","Hides this window while your character is out of combat. Applies in addition to the group rules. Enabling both combat options keeps it hidden at all times."}})
 optionsGroup("Window","Background",false,{
     {"windowColour","Background colour",0,"colour"},{"opacity","Background opacity",0.01,"number","0% is transparent; 100% is solid. Player bars keep their own opacity."},
     {"borderColour","Border colour",0,"colour"},{"watermark","Logo opacity",0.01,"number","Controls how visible the Caw logo is behind the bars. Set to 0% to hide it."}})
@@ -784,7 +849,7 @@ optionsGroup("Header","Appearance",false,{
 optionsGroup("Header","Buttons",true,{
     {"buttonSide","Buttons on the",0,"choice"},{"alwaysOverflow","Put all buttons in the ... menu",0,"bool","Keeps just the mode, fight selector and actions menu visible. Narrow windows always use this layout."}})
 optionsGroup("Header","Buttons",true,{
-    {"showSettings","Show Settings",0,"bool"},{"showNew","Show New window",0,"bool"},
+    {"showSettings","Show Settings",0,"bool"},{"showNew","Show Add window",0,"bool"},
     {"showReport","Show Report",0,"bool"},{"showReset","Show Reset",0,"bool"},
     {"showLock","Show Lock",0,"bool"},{"showClose","Show Close",0,"bool"}})
 optionsGroup("Footer","Display",false,{{"showFooter","Show bottom bar",0,"bool","Shows the strip with totals at the bottom of the meter."}})
@@ -1333,11 +1398,12 @@ function D.openOptions(v)
         local function action(page,label,x,y,w,fn)
             local b=D.uiButton(p,label,x,y,w,fn); b.page=page; table.insert(p.actions,b); return b
         end
-        action("Window","New window",584,-395,88,function()
+        local addWindow=action("Window","Add window",584,-395,88,function()
             local new=D.createMultiWindow(nil); if new then p.view=new end; D.saveMultiWindows(); D.refreshOptions()
         end)
-        local showMain=action("Window","Show main",680,-395,88,function() D.window:Show() end)
-        D.uiTooltip(showMain,"Show the main Caw window.")
+        D.uiTooltip(addWindow,"Open another meter. Reuses the last closed window's position and settings, if available.")
+        local showMain=action("Window","Show main",680,-395,88,function() D.uiSetMeterShown(D.window,true) end)
+        D.uiTooltip(showMain,"Show the main Caw window. Automatic hiding and chat docking still apply.")
         p.threatTest=action("Threat","Test warning",584,-145,184,function() D.threatAlertTest() end)
         p.editing=D.uiText(p,"Editing",18,-453,64,12)
         p.target=D.uiListButton(p,78,-449,158,function()
@@ -1423,3 +1489,18 @@ function D.uiEnsureOptionsButton(v)
 end
 SLASH_CAWOPTIONS1="/cawoptions"
 SlashCmdList.CAWOPTIONS=function() D.openOptions(nil) end
+
+-- Group/zone changes invalidate the cached context; no combat-event work.
+D.uiVisibilityEvents=CreateFrame("Frame",nil,UIParent)
+for _,ev in ipairs({"PLAYER_ENTERING_WORLD","PARTY_MEMBERS_CHANGED","RAID_ROSTER_UPDATE",
+    "ZONE_CHANGED_NEW_AREA","UPDATE_BATTLEFIELD_STATUS","PLAYER_REGEN_DISABLED","PLAYER_REGEN_ENABLED"}) do D.uiVisibilityEvents:RegisterEvent(ev) end
+D.uiVisibilityEvents:SetScript("OnEvent",function()
+    if event=="PLAYER_REGEN_DISABLED" then D.uiPlayerInCombat=true
+    elseif event=="PLAYER_REGEN_ENABLED" then D.uiPlayerInCombat=false
+    else
+        D.uiGroupContext=nil
+        if event=="PLAYER_ENTERING_WORLD" then D.uiPlayerInCombat=nil end
+    end
+    D.uiUpdateVisibility()
+    if D.pfDockUpdate then D.pfDockUpdate() end
+end)

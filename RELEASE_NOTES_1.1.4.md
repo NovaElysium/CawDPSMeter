@@ -1,5 +1,13 @@
 # Caw DPS Meter 1.1.4
 
+- **Automatic hiding:** Each window can now hide when solo, in a party, in a
+  raid, in a battleground, in combat or out of combat. Find these options under
+  Window > Automatically hide. Recording and sync continue while hidden.
+- **Stable window positions:** Fixed small windows shifting inward after a
+  reload, including at 65% scale and with multiple windows.
+- **Reopen where you left off:** Closing an extra window with X now remembers
+  its position, size and settings. Use + to reopen the last closed window, or
+  `/cd show` to reopen them together. Closed extra windows stay closed on reload.
 - **More window customization:** Separate top and bottom bar heights, text sizes,
   colours and opacity. Customize player bars, fonts, outlines, shadows, text
   alignment and spacing. Hide the footer, stack bars upwards or choose which
@@ -38,6 +46,10 @@
 
 ## Updating
 
+The ZIP was updated on 17 September 2026 with the window fixes and automatic
+hiding options above. The version remains 1.1.4; download it again if you
+installed the earlier 1.1.4 package.
+
 Replace the CawDPSMeter addon folder with the folder inside the ZIP, then use
 `/reload` or restart the client. Existing saved settings are retained. SuperWoW
 and SuperAPI requirements are unchanged. DPSLog remains optional and is installed
@@ -54,6 +66,8 @@ Local threat estimation is still being calibrated.
 
 Automated checks cover combat data, settings, menus, display caching and isolated
 PARTY/RAID clients exchanging the real addon messages through a mocked transport.
+Window checks cover repeated reloads at different scales, closing and reopening,
+all six hiding conditions and their interaction with pfUI chat docking.
 Sync checks include interrupted and incomplete transfers, disabled recording,
 older peers, saved fights, Overall, packet limits and diagnostics across reloads.
 Local gameplay recordings were also checked for DPSLog input, pet damage and

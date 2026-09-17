@@ -63,6 +63,11 @@ Use the sliders icon (or **... > Settings** in a narrow window), right-click a p
 window scale, size, bar spacing, text, transparency and pfUI docking options.
 Each window has its own appearance. New windows fit five bars; existing layouts
 are kept. Overall contains completed fights and stays selected when combat starts.
+Under **Window > Automatically hide**, each meter can be hidden when solo, in a
+party, in a raid, in a battleground, in combat or out of combat. Matching any
+enabled condition hides the window; battlegrounds use their own group rule.
+Combat rules follow your character's combat state. Recording and sync continue.
+Use `/cawoptions` to adjust the settings while meters are hidden.
 **Top bar** and **Bottom bar** set their own height, font size, colour and opacity;
 the bottom bar can be hidden. Expand **Buttons** on the Top bar page to change
 which buttons appear and on which side. Hidden actions stay available through
@@ -209,7 +214,11 @@ normal hiding and pfUI's alpha-only hiding are supported.
 
 Use the **+** button for additional windows. Each window keeps its own mode, size,
 position and scroll offset, and all windows use matching bar dimensions and scroll
-controls.
+controls. Closing an extra window with **X** remembers its position, size, mode
+and appearance. **+ / Add window** restores the most recently closed window;
+`/cd show` reopens closed meters together. Closed extra windows stay closed on
+login or reload. Automatic hiding and pfUI chat visibility still apply when
+reopening a window.
 
 Right-click a window's lock icon to dock or undock it at the pfUI right chat.
 Multiple docked windows sit edge-to-edge side by side inside the right chat area,

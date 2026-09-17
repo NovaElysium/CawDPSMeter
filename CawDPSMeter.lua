@@ -3347,6 +3347,9 @@ end
 
 local function restoreWindowState()
     initializeSavedVariables()
+    -- Clamp the restored frame at its saved scale, not the initial 100% size.
+    -- Otherwise a valid small window near an edge is pushed inward on reload.
+    if D.uiSettings then frame:SetScale(D.uiSettings().scale) end
     local src=nil
     -- The meter layout is shared. Prefer the account-wide copy so a stale
     -- per-character layout from another client/older build cannot reset or
@@ -3830,7 +3833,7 @@ flatPanel(closeButton,0.065,0.065,0.065,1,0.25)
 closeButton:SetBackdropColor(0.08,0.08,0.08,1)
 local closeText=closeButton:CreateFontString(nil,"OVERLAY","GameFontHighlight"); closeText:SetPoint("CENTER",closeButton,"CENTER",0,0); closeText:SetText("")
 closeButton.icon=closeButton:CreateTexture(nil,"ARTWORK"); closeButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawClose.tga"); closeButton.icon:SetWidth(12); closeButton.icon:SetHeight(12); closeButton.icon:SetPoint("CENTER",closeButton,"CENTER",0,0)
-closeButton:SetScript("OnClick",function() frame:Hide() end)
+closeButton:SetScript("OnClick",function() if D.uiSetMeterShown then D.uiSetMeterShown(frame,false) else frame:Hide() end end)
 closeButton:SetScript("OnEnter",function() this:SetBackdropColor(0.28,0.08,0.08,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Close window",1,1,1); tt:Show() end end)
 closeButton:SetScript("OnLeave",function() this:SetBackdropColor(0.08,0.08,0.08,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
 
@@ -4872,6 +4875,19 @@ function D.clampMultiWindow(f)
     end
 end
 
+function D.multiWindowSnapshot(v)
+    local f=v.frame
+    local cx,cy=f:GetCenter(); local ux,uy=UIParent:GetCenter()
+    local x,y=(cx and ux) and (cx-ux) or 0,(cy and uy) and (cy-uy) or 0
+    if D.uiCenterOffset then x,y=D.uiCenterOffset(f) end
+    if f.cawDockFree then x,y=f.cawDockFree.x,f.cawDockFree.y end
+    local seg=v.segment; local index=v.segmentIndex or 0
+    if seg=="history" then seg="current"; index=0 end
+    return {mode=v.mode,segment=seg,segmentIndex=index,locked=v.locked and true or false,
+        pfDock=v.pfDock and true or false,appearance=D.uiCopySettings and D.uiCopySettings(v.appearance) or nil,
+        width=f:GetWidth(),height=f:GetHeight(),centerX=x,centerY=y}
+end
+
 function D.saveMultiWindows()
     initializeSavedVariables()
     DB=CawDPSMeterDB
@@ -4884,17 +4900,9 @@ function D.saveMultiWindows()
         local v=D.multiWindows[i]
         -- RC35: a closed view is a tombstone and must never be re-serialized,
         -- even if an old frame object still exists until the next reload.
-        if v and not v.closed and v.frame and (v.frame:IsShown() or (v.frame.cawDockFree and v.frame.cawDockFree.hiddenByDock)) then
-            local cx,cy=v.frame:GetCenter(); local ux,uy=UIParent:GetCenter()
-            if D.uiCenterOffset then local x,y=D.uiCenterOffset(v.frame); cx=ux+x; cy=uy+y end
-            local seg=v.segment
-            local segIndex=v.segmentIndex or 0
-            if seg=="history" then seg="current"; segIndex=0 end
-            if v.frame.cawDockFree then cx=ux+v.frame.cawDockFree.x; cy=uy+v.frame.cawDockFree.y end
-            saved[out]={mode=v.mode,segment=seg,segmentIndex=segIndex,locked=v.locked and true or false,pfDock=v.pfDock and true or false,
-                appearance=D.uiCopySettings and D.uiCopySettings(v.appearance) or nil,
-                width=v.frame:GetWidth(),height=v.frame:GetHeight(),
-                centerX=(cx and ux) and (cx-ux) or 0,centerY=(cy and uy) and (cy-uy) or 0}
+        if v and not v.closed and v.frame and (v.frame:IsShown() or (not v.frame.cawManuallyHidden
+            and (v.frame.cawHiddenByContext or (v.frame.cawDockFree and v.frame.cawDockFree.hiddenByDock)))) then
+            saved[out]=D.multiWindowSnapshot(v)
             out=out+1
         end
         i=i+1
@@ -4922,6 +4930,13 @@ end
 
 function D.removeMultiWindow(v)
     if not v or v.closed then return end
+    if D.uiStopMeterDrag then D.uiStopMeterDrag(v.frame.cawDragHandle) end
+    initializeSavedVariables()
+    -- Keep only the three most recently closed layouts. They are restored by
+    -- an explicit Add window / show action, never by login or reload.
+    if type(CawDPSMeterCharDB.closedWindows)~="table" then CawDPSMeterCharDB.closedWindows={} end
+    table.insert(CawDPSMeterCharDB.closedWindows,1,D.multiWindowSnapshot(v))
+    while table.getn(CawDPSMeterCharDB.closedWindows)>D.multiWindowMax-1 do table.remove(CawDPSMeterCharDB.closedWindows) end
     -- RC35: mark closed before touching UI/state. This makes close persistence
     -- independent of the frame's shown state or id bookkeeping.
     v.closed=true
@@ -5111,6 +5126,8 @@ function D.createMultiWindow(saved)
     local id=nil; local i=2
     while i<=D.multiWindowMax do if not D.multiWindows[i] then id=i; break end; i=i+1 end
     if not id then D.updateMultiAddButtons(); return nil end
+    local closed=CawDPSMeterCharDB and CawDPSMeterCharDB.closedWindows
+    if not saved and type(closed)=="table" and table.getn(closed)>0 then saved=table.remove(closed,1) end
     local savedMode=(saved and saved.mode) or "healing"
     if not MODE_LABELS[savedMode] then savedMode="healing" end
     local savedSegment=(saved and saved.segment) or "current"
@@ -5127,11 +5144,15 @@ function D.createMultiWindow(saved)
         pooled.scrollOffset=0; pooled.locked=(saved and saved.locked) and true or false
         pooled.pfDock=(saved and saved.pfDock) and true or false
         local pf=pooled.frame
-        pf:SetScale(1); pf:SetWidth(savedWidth); pf:SetHeight(savedHeight); pf:ClearAllPoints()
-        pf:SetPoint("CENTER",UIParent,"CENTER",tonumber(saved and saved.centerX) or (220+id*26),tonumber(saved and saved.centerY) or (-40-id*20))
+        pf:SetScale(pooled.appearance and pooled.appearance.scale or 1); pf:SetWidth(savedWidth); pf:SetHeight(savedHeight)
+        local cx=tonumber(saved and saved.centerX) or (220+id*26); local cy=tonumber(saved and saved.centerY) or (-40-id*20)
+        if D.uiAnchorCenter then D.uiAnchorCenter(pf,cx,cy)
+        else pf:ClearAllPoints(); pf:SetPoint("CENTER",UIParent,"CENTER",cx,cy) end
         pf.nextUpdate=nil
         pf:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(pooled,true) end end)
-        pf:Show(); D.clampMultiWindow(pf); D.applyMultiWindowLock(pooled); D.updateMultiWindow(pooled); D.updateMultiAddButtons()
+        D.clampMultiWindow(pf); D.applyMultiWindowLock(pooled)
+        if D.uiSetMeterShown then D.uiSetMeterShown(pf,true) else pf:Show() end
+        D.updateMultiWindow(pooled); D.updateMultiAddButtons()
         return pooled
     end
     local v={id=id,mode=savedMode,segment=savedSegment,segmentIndex=0,locked=(saved and saved.locked) and true or false,scrollOffset=0,rows={}}
@@ -5151,7 +5172,8 @@ function D.createMultiWindow(saved)
     v.toolbar=f:CreateTexture(nil,"ARTWORK"); v.toolbar:SetTexture(FLAT_TEX); v.toolbar:SetVertexColor(0.065,0.065,0.065,1); v.toolbar:SetPoint("TOPLEFT",f,"TOPLEFT",1,-28); v.toolbar:SetPoint("TOPRIGHT",f,"TOPRIGHT",-1,-28); v.toolbar:SetHeight(22)
     v.toolbarLine=f:CreateTexture(nil,"ARTWORK"); v.toolbarLine:SetTexture(FLAT_TEX); v.toolbarLine:SetVertexColor(0.18,0.18,0.18,1); v.toolbarLine:SetPoint("TOPLEFT",f,"TOPLEFT",1,-50); v.toolbarLine:SetPoint("TOPRIGHT",f,"TOPRIGHT",-1,-50); v.toolbarLine:SetHeight(1)
     local cx=tonumber(saved and saved.centerX) or (220+(id*26)); local cy=tonumber(saved and saved.centerY) or (-40-(id*20))
-    f:SetPoint("CENTER",UIParent,"CENTER",cx,cy)
+    f:SetScale(v.appearance and v.appearance.scale or 1)
+    if D.uiAnchorCenter then D.uiAnchorCenter(f,cx,cy) else f:SetPoint("CENTER",UIParent,"CENTER",cx,cy) end
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart",function() if not v.locked and not this.cawDockFree then this:StartMoving() end end)
     f:SetScript("OnDragStop",function() this:StopMovingOrSizing(); D.clampMultiWindow(this); D.saveMultiWindows() end)
@@ -5190,7 +5212,7 @@ function D.createMultiWindow(saved)
     v.addText=v.addButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); v.addText:SetPoint("CENTER",v.addButton,"CENTER",0,0); v.addText:SetText("")
     v.addIcon=v.addButton:CreateTexture(nil,"ARTWORK"); v.addIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawAdd.tga"); v.addIcon:SetWidth(12); v.addIcon:SetHeight(12); v.addIcon:SetPoint("CENTER",v.addButton,"CENTER",0,0)
     v.addButton:SetScript("OnClick",function() D.createMultiWindow(nil); D.saveMultiWindows() end)
-    v.addButton:SetScript("OnEnter",function() this:SetBackdropColor(0.14,0.14,0.14,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Create another Caw window",1,1,1); tt:Show() end end)
+    v.addButton:SetScript("OnEnter",function() this:SetBackdropColor(0.14,0.14,0.14,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Add window",1,1,1); tt:AddLine("Reopens the last closed window with its position and settings.",0.8,0.8,0.8); tt:Show() end end)
     v.addButton:SetScript("OnLeave",function() this:SetBackdropColor(0.055,0.055,0.055,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
     v.reportMenu=CreateFrame("Frame",nil,f); v.reportMenu:SetWidth(96); v.reportMenu:SetHeight(106); v.reportMenu:SetPoint("TOPRIGHT",v.reportButton,"BOTTOMRIGHT",0,-2); flatPanel(v.reportMenu,0.025,0.025,0.025,0.99,0.25); v.reportMenu.cawDropdown=true; v.reportMenu:SetFrameStrata("DIALOG"); v.reportMenu:SetFrameLevel(60); v.reportMenu:Hide()
     local reportChannels={{label="Say",channel="SAY"},{label="Party",channel="PARTY"},{label="Raid",channel="RAID"},{label="Guild",channel="GUILD"},{label="Whisper...",channel="WHISPER"}}
@@ -5296,7 +5318,9 @@ function D.createMultiWindow(saved)
     if f.EnableMouseWheel then f:EnableMouseWheel(true) end
     f:SetScript("OnMouseWheel",function() D.scrollMultiWindow(v,arg1 and arg1>0 and -1 or 1) end)
     f:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(v,true) end end)
-    D.clampMultiWindow(f); D.layoutMultiWindow(v); D.applyMultiWindowLock(v); D.updateMultiWindow(v)
+    D.clampMultiWindow(f); D.layoutMultiWindow(v); D.applyMultiWindowLock(v)
+    if D.uiUpdateWindowVisibility then D.uiUpdateWindowVisibility(v) end
+    D.updateMultiWindow(v)
     D.updateMultiAddButtons()
     return v
 end
@@ -5346,13 +5370,21 @@ function D.restoreMultiWindows()
     D.saveMultiWindows()
 end
 
+function D.reopenClosedMultiWindows()
+    local closed=CawDPSMeterCharDB and CawDPSMeterCharDB.closedWindows
+    while type(closed)=="table" and table.getn(closed)>0 do
+        if not D.createMultiWindow(nil) then break end
+    end
+    D.saveMultiWindows()
+end
+
 D.multiAddButton=CreateFrame("Button",nil,frame)
 D.multiAddButton:SetWidth(17); D.multiAddButton:SetHeight(17)
 flatPanel(D.multiAddButton,0.055,0.055,0.055,1,0.25)
 D.multiAddText=D.multiAddButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); D.multiAddText:SetPoint("CENTER",D.multiAddButton,"CENTER",0,0); D.multiAddText:SetText("")
 D.multiAddIcon=D.multiAddButton:CreateTexture(nil,"ARTWORK"); D.multiAddIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawAdd.tga"); D.multiAddIcon:SetWidth(12); D.multiAddIcon:SetHeight(12); D.multiAddIcon:SetPoint("CENTER",D.multiAddButton,"CENTER",0,0)
 D.multiAddButton:SetScript("OnClick",function() D.createMultiWindow(nil); D.saveMultiWindows() end)
-D.multiAddButton:SetScript("OnEnter",function() this:SetBackdropColor(0.14,0.14,0.14,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Create another Caw window",1,1,1); tt:Show() end end)
+D.multiAddButton:SetScript("OnEnter",function() this:SetBackdropColor(0.14,0.14,0.14,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Add window",1,1,1); tt:AddLine("Reopens the last closed window with its position and settings.",0.8,0.8,0.8); tt:Show() end end)
 D.multiAddButton:SetScript("OnLeave",function() this:SetBackdropColor(0.055,0.055,0.055,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
 if D.applyCompactWindowLayout then D.applyCompactWindowLayout() end
 D.updateMultiAddButtons()
@@ -5912,8 +5944,10 @@ end
 SLASH_CAWDPS1="/cawdps"
 SLASH_CAWDPS2="/cd"
 SlashCmdList["CAWDPS"]=function(msg)
-    if msg=="hide" then forEachMeterWindow(function(f) f:Hide() end)
-    elseif msg=="show" then forEachMeterWindow(function(f) f:Show() end)
+    if msg=="hide" then forEachMeterWindow(function(f) if D.uiSetMeterShown then D.uiSetMeterShown(f,false) else f:Hide() end end)
+    elseif msg=="show" then
+        forEachMeterWindow(function(f) if D.uiSetMeterShown then D.uiSetMeterShown(f,true) else f:Show() end end)
+        D.reopenClosedMultiWindows()
     elseif msg=="reset" then resetFight(); D.inCombat=false; D.segment="current"; updateUI(); chat("Current combat data reset. Window layout kept.")
     elseif msg=="resetpos" then resetWindowPosition(); saveWindowState(); updateUI(); chat("Window position reset.")
     elseif msg=="resetoverall" then D.overallSegment={actors={},duration=0,fights=0}; updateUI(); chat("Overall segment reset.")
@@ -5941,8 +5975,12 @@ SlashCmdList["CAWDPS"]=function(msg)
             i=i+1
         end
     else
-        if frame:IsVisible() then forEachMeterWindow(function(f) f:Hide() end)
-        else forEachMeterWindow(function(f) f:Show() end) end
+        local shown=not frame:IsVisible()
+        forEachMeterWindow(function(f)
+            if D.uiSetMeterShown then D.uiSetMeterShown(f,shown)
+            elseif shown then f:Show() else f:Hide() end
+        end)
+        if shown then D.reopenClosedMultiWindows() end
     end
 end
 SLASH_CAWDPSDEBUG1="/cddebug"
