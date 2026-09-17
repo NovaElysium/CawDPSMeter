@@ -1,5 +1,8 @@
 # Caw DPS Meter 1.1.4
 
+- **Correct shield damage:** Enemy retaliation such as Jadefire no longer
+  counts as your or your pet's damage and inflates DPS. Friendly damage shields
+  still count for the unit carrying the shield.
 - **Automatic hiding:** Each window can now hide when solo, in a party, in a
   raid, in a battleground, in combat or out of combat. Find these options under
   Window > Automatically hide. Recording and sync continue while hidden.
@@ -46,8 +49,8 @@
 
 ## Updating
 
-The ZIP was updated on 17 September 2026 with the window fixes and automatic
-hiding options above. The version remains 1.1.4; download it again if you
+The ZIP was updated on 17 September 2026 with the damage-shield correction,
+window fixes and automatic hiding options above. The version remains 1.1.4; download it again if you
 installed the earlier 1.1.4 package.
 
 Replace the CawDPSMeter addon folder with the folder inside the ZIP, then use
@@ -68,6 +71,8 @@ Automated checks cover combat data, settings, menus, display caching and isolate
 PARTY/RAID clients exchanging the real addon messages through a mocked transport.
 Window checks cover repeated reloads at different scales, closing and reopening,
 all six hiding conditions and their interaction with pfUI chat docking.
+Damage-shield checks cover enemy retaliation against players and pets, friendly
+shields, ownership, target totals and duplicate combat text.
 Sync checks include interrupted and incomplete transfers, disabled recording,
 older peers, saved fights, Overall, packet limits and diagnostics across reloads.
 Local gameplay recordings were also checked for DPSLog input, pet damage and

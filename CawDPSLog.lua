@@ -1,7 +1,7 @@
 -- Optional DPSLog input for the vanilla client. This API starts with subevent,
 -- NOT the timestamp/hideCaster prefix used by other CLEU implementations.
 local D=CAW_DPS_METER
-D.dpsLogVersion="2"
+D.dpsLogVersion="3"
 D.dpsLogEvents=0
 D.dpsLogRejected=0
 -- Describe the current producer, not the provenance of saved fights. Reading
@@ -147,6 +147,15 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
     if D.dpsLogProbing then choose(true) end
     D.dpsLogEvents=D.dpsLogEvents+1
     status(nil,true)
+    -- This vanilla DPSLog's damageShieldDetour reports the original melee
+    -- attacker as source and the shield owner as destination (the spell is
+    -- resolved from that destination's auras). Normalize retaliation BEFORE
+    -- roster lookup: enemy shields must not become player/pet damage, while
+    -- our own shields still belong to the unit carrying the shield.
+    if sub=="DAMAGE_SHIELD" then
+        src,dst=dst,src; srcName,dstName=dstName,srcName
+        srcFlags,dstFlags=dstFlags,srcFlags; srcRaid,dstRaid=dstRaid,srcRaid
+    end
     local info=src and D.guidToActor[src]
     -- Membership comes from our roster or a proven summon chain, not just a
     -- friendly flag. Never pull unrelated nearby players into group totals.
@@ -192,6 +201,7 @@ function D.dpsLogReceive(sub,src,srcName,srcFlags,srcRaid,dst,dstName,dstFlags,d
             amount=amount,overAmount=over,sourceFlags=srcFlags,destFlags=dstFlags,
             sourceRaidFlags=srcRaid,destRaidFlags=dstRaid,spellSchool=offset==1 and nil or a3,
             critical=truth(critical)}
+        if sub=="DAMAGE_SHIELD" then D.dpsLogCurrent.shieldDirectionCorrected=true end
         if healing[sub] then D.dpsLogCurrent.absorbed=a6
         elseif offset==1 then
             D.dpsLogCurrent.resisted=a4; D.dpsLogCurrent.blocked=a5; D.dpsLogCurrent.absorbed=a6

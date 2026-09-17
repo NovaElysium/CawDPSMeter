@@ -8,6 +8,9 @@ and [Semantic Versioning](https://semver.org/).
 ## [1.1.4] - 2026-09-16
 
 ### Fixed
+- Normalize the reversed source and target in vanilla DPSLog damage-shield
+  events before assigning damage. Enemy retaliation such as Jadefire no longer
+  counts as player or pet damage; friendly shields retain their actual owner.
 - Restore window scale before positioning and screen-edge checks. Small windows
   near an edge no longer drift inward after a reload, including extra windows.
 - Reopening a closed extra window restores its position, size and settings.

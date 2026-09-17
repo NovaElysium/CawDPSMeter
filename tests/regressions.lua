@@ -873,6 +873,58 @@ D.dpsLogReceive('SPELL_DAMAGE','0x1',nil,1,0,'0xF1','Mob',64,0,75,'Auto Shot',1,
 local found=false
 for _,e in ipairs(D.threatCalSession.events) do if e.combatEvent and e.combatEvent.spellId==75 then found=true end end
 check(found and D.dpsLogCurrent==nil,"local threat calibration retains structured spell and target context")
+do
+    -- The vanilla DPSLog shield header names the original melee attacker
+    -- first, followed by the shield owner. Replay both directions, not a
+    -- Jadefire-only exclusion that would also drop real friendly retaliation.
+    fresh()
+    local function shield(attacker,owner,spellId,spell,amount,attackerName,ownerName)
+        return D.dpsLogReceive('DAMAGE_SHIELD',attacker,attackerName,1304,1,owner,ownerName,68168,2,
+            spellId,spell,2,amount,-1,2,0,0,0,nil)
+    end
+    for i=1,11 do shield('0x1','0xF1',13578,'Jadefire',50,'Hunter','Jadefire Satyr') end
+    for i=1,5 do shield('0x2','0xF1',13578,'Jadefire',50,'Wolf','Jadefire Satyr') end
+    check(not D.inCombat and not D.actors['0x1'] and not D.actors['0x2'],
+        'enemy Jadefire shield cannot create 550 player plus 250 pet outgoing damage or open a damage segment')
+    check(not next(D.currentEnemyDamage) and D.guidToActor['0x1'].name=='Hunter'
+        and D.guidToActor['0x2'].name=='Wolf','reversed enemy shields do not pollute target totals or roster names')
+    D.dpsLogReceive('SWING_DAMAGE','0x1','Hunter',1304,0,'0xF1','Jadefire Satyr',68168,0,900,-1,1,0,0,0,nil)
+    D.dpsLogReceive('SWING_DAMAGE','0x2','Wolf',2584,0,'0xF1','Jadefire Satyr',68168,0,433,-1,1,0,0,0,nil)
+    shield('0x1','0xF1',13578,'Jadefire',50,'Hunter','Jadefire Satyr')
+    check(D.actors['0x1'].damage==900 and D.actors['0x2'].damage==433
+        and not D.actors['0x1'].spells.Jadefire and not D.actors['0x2'].spells.Jadefire,
+        'enemy retaliation cannot inflate existing player and pet totals or ability rows')
+    local context=D.breakdownContext({mode='damage',segment='current'})
+    local _,total=D.targetBreakdownEntries(context,'0x1',nil,{})
+    check(total==1333 and D.actors['0x1'].damageTargets['0xF1'].damage==900,
+        'target and owner-pet breakdown totals exclude incoming shield damage too')
+    check(shield('0xF1','0x1',467,'Thorns',23,'Enemy','Hunter'),
+        'a friendly shield is accepted even though the original attacker is outside the roster')
+    check(D.actors['0x1'].damage==923 and D.actors['0x1'].spells.Thorns.damage==23
+        and D.actors['0x1'].damageTargets['0xF1'].spells.Thorns.spellId==467,
+        'friendly retaliation retains its owner, spell ID and actual enemy destination')
+    local shieldEvent
+    for _,e in ipairs(D.threatCalSession.events) do
+        if e.combatEvent and e.combatEvent.subevent=='DAMAGE_SHIELD' then shieldEvent=e.combatEvent end
+    end
+    check(shieldEvent and shieldEvent.sourceGuid=='0x1' and shieldEvent.destGuid=='0xF1'
+        and shieldEvent.sourceFlags==68168 and shieldEvent.destFlags==1304
+        and shieldEvent.sourceRaidFlags==2 and shieldEvent.destRaidFlags==1
+        and shieldEvent.shieldDirectionCorrected and D.dpsLogCurrent==nil,
+        'shield GUIDs, flags and raid flags are normalized together and recorded in diagnostics')
+    shield('0xF1','0x2',467,'Thorns',17,'Enemy','Wolf')
+    check(D.actors['0x2'].damage==450 and D.actors['0x2'].spells.Thorns.damage==17
+        and D.actors['0x2'].ownerKey=='0x1' and D.actors['0x2'].damageTargets['0xF1'].damage==450,
+        'a buffed pet owns its retaliation and keeps the owner relationship')
+    fire(D.events,'RAW_COMBATLOG','CHAT_MSG_SPELL_DAMAGESHIELDS_ON_OTHERS',"0x2's Thorns hits 0xF1 for 17.")
+    check(D.actors['0x2'].damage==450,'RAW shield text cannot duplicate structured outgoing retaliation')
+    shield('0xF1','0x99',467,'Thorns',17,'Enemy','Outsider')
+    check(not D.actors['0x99'] and not D.guidToActor['0x99'],'unrelated friendly shield owners stay outside group totals')
+    D.dpsLogReceive('SPELL_DAMAGE','0x1','Hunter',1304,0,'0xF1','Enemy',68168,0,75,'Auto Shot',1,10,-1,1,0,0,0,nil)
+    D.dpsLogReceive('SPELL_HEAL','0x1','Hunter',1304,0,'0x2','Wolf',2584,0,136,'Mend Pet',8,100,40,0,nil)
+    check(D.actors['0x1'].damage==933 and D.actors['0x1'].healing==60,
+        'ordinary spell damage and healing keep their original source-target direction')
+end
 D.threatCalEnabled=false; D.dpsLogActive=false
 D.dpsLogInitialized=nil; D.dpsLogRawCommitted=nil; D.dpsLogInitialize(); fresh()
 fire(D.events,'RAW_COMBATLOG','CHAT_MSG_COMBAT_SELF_HITS','You hit 0xF1 for 19.')
