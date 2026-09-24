@@ -21,6 +21,7 @@ function D.serverThreatPublish(rows,req,state)
             _serverTarget=state.name,_serverTank=r.tank,_serverMelee=r.melee}
     end
     D.serverThreatSnapshot={actors=actors,time=GetTime(),guid=state.guid,generation=state.generation,segmentSerial=state.segmentSerial}
+    return true
 end
 
 function D.serverThreatCurrent()

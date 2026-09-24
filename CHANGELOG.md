@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-09-24
+
+### Fixed
+- Save the complete window layout consistently across characters, including
+  extra meters, appearance and pfUI docking. Hidden windows no longer disappear
+  from saved settings; explicitly closed windows remain closed until reopened.
+- Copy to all windows now includes width, height, bar count and the window lock.
+  Each window keeps its own position, docking and selected meter.
+- Remove the repeated missing Threat response chat message. Failed requests use
+  increasing delays up to 30 seconds, including transport errors; only a matching
+  fresh response restores normal polling.
+- Threat retry delays belong to the target that failed. New enemies, including
+  elites and bosses, are queried promptly while previous requests finish safely.
+  Returning to a failed target preserves its delay; rapid target switching and
+  transport failures remain rate-limited.
+- Reset now clears all combat data across every window, including Current,
+  Overall and saved fights, with one confirmation and no scope selection.
+  `/cd reset` also clears all combat data. Window settings are kept.
+
 ## [1.1.4] - 2026-09-16
 
 ### Fixed

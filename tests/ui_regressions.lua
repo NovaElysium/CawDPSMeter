@@ -190,7 +190,7 @@ check(serverTotal==222,"server analysis selects actor identity rather than chang
 D.serverThreatActors=srv
 D.uiSettings(v).scale=1; D.layoutMultiWindow(v)
 D.openOptions(nil); click(D.mainView.resetButton)
-check(D.resetDialog:IsShown() and D.resetDialog.kind=='current',"header reset action opens an explicit confirmation")
+check(D.resetDialog:IsShown() and not D.resetDialog.scopes,"header reset action opens one confirmation without scope selection")
 local before=D.actors; click(byLabel(D.resetDialog,"Cancel"))
 check(D.actors==before,"cancelling reset leaves data untouched")
 D.uiSettings(v).rowHeight=31; D.uiPersist()

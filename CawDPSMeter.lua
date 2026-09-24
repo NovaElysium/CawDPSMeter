@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.1.4
+-- Caw DPS Meter v1.1.5
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.1.4"
+D.version = "1.1.5"
 function D.parserEnabled()
     return not CawDPSMeterCharDB or CawDPSMeterCharDB.parserEnabled~=false
 end
@@ -481,6 +481,23 @@ function D.getControlTooltip()
     return D.controlTooltip
 end
 
+-- Window layouts are shared across characters. Mirror only these UI fields;
+-- recording, sync and calibration preferences remain character-specific.
+local windowSettingsKeys={"width","height","point","relativePoint","x","y","left","top",
+    "centerX","centerY","layoutVersion","layoutSaved","locked","mode","segment","segmentIndex",
+    "appearance","windowHidden","pfDockMain","pfDockAlternate","pfDockRevision","bagLayerAlwaysBehind",
+    "extraWindows","extraWindowsVersion","extraWindowsExplicit","extraWindowCount","extraWindowsRevision",
+    "closedWindows","windowSettingsVersion"}
+local function copyWindowValue(value)
+    if type(value)~="table" then return value end
+    local copy={}
+    for k,v in pairs(value) do copy[k]=copyWindowValue(v) end
+    return copy
+end
+local function copyWindowSettings(src,dst)
+    for _,key in ipairs(windowSettingsKeys) do dst[key]=copyWindowValue(src[key]) end
+end
+
 local function initializeSavedVariables()
     if D.savedVariablesReady then return end
     if not CawDPSMeterDB then CawDPSMeterDB = {} end
@@ -502,6 +519,11 @@ local function initializeSavedVariables()
         DB.migratedFromDetails = true
     end
 
+    if DB.windowSettingsVersion==1 then
+        copyWindowSettings(DB,CharDB)
+    elseif CharDB.windowSettingsVersion==1 then
+        copyWindowSettings(CharDB,DB)
+    end
     if DB.locked == nil then DB.locked = false end
     D.locked = DB.locked and true or false
     if D.uiCopySettings then D.appearance=D.uiCopySettings(DB.appearance) end
@@ -3380,6 +3402,7 @@ local function restoreWindowState()
     end
     ensureWindowOnScreen()
     D.layoutRestored=true
+    if D.uiSetMeterShown then D.uiSetMeterShown(frame,not DB.windowHidden) end
 end
 
 if frame.SetMinResize then pcall(frame.SetMinResize,frame,160,70) end
@@ -3414,10 +3437,13 @@ local function writeWindowState(dst)
     dst.segmentIndex=0
     dst.layoutVersion=4
     dst.layoutSaved=true
+    dst.appearance=D.uiCopySettings and D.uiCopySettings(D.uiSettings()) or nil
+    dst.windowHidden=frame.cawManuallyHidden and true or false
 end
 
 local function saveWindowState()
     initializeSavedVariables()
+    if not D.layoutRestored or not D.multiWindowsRestored or D.restoringMultiWindows then return end
     -- Re-bind to the globals immediately before every write. This is deliberate:
     -- if a custom client swapped the SavedVariables table during loading, we
     -- always write into the exact table WoW will serialize on logout.
@@ -3425,6 +3451,11 @@ local function saveWindowState()
     CharDB = CawDPSMeterCharDB
     writeWindowState(DB)
     writeWindowState(CharDB)
+    DB.pfDockMain=CharDB.pfDockMain
+    DB.pfDockAlternate=CharDB.pfDockAlternate
+    DB.pfDockRevision=CharDB.pfDockRevision
+    DB.bagLayerAlwaysBehind=CharDB.bagLayerAlwaysBehind
+    DB.closedWindows=copyWindowValue(CharDB.closedWindows)
 end
 
 frame:RegisterForDrag("LeftButton")
@@ -3820,7 +3851,7 @@ flatPanel(resetButton,0.065,0.065,0.065,1,0.25)
 resetButton:SetBackdropColor(0.08,0.08,0.08,1)
 local resetText=resetButton:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); resetText:SetPoint("CENTER",resetButton,"CENTER",0,0); resetText:SetText("")
 resetButton.icon=resetButton:CreateTexture(nil,"ARTWORK"); resetButton.icon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawReset.tga"); resetButton.icon:SetWidth(12); resetButton.icon:SetHeight(12); resetButton.icon:SetPoint("CENTER",resetButton,"CENTER",0,0)
-resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset("current") end end)
+resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset() end end)
 resetButton:SetScript("OnEnter",function()
     this:SetBackdropColor(0.15,0.15,0.15,1)
     local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Reset meter data",1,1,1); tt:Show() end
@@ -4782,7 +4813,7 @@ function D.updateMultiAddButtons()
     local i=2
     while i<=D.multiWindowMax do
         local v=D.multiWindows[i]
-        if v and v.frame and v.frame:IsShown() then count=count+1 end
+        if v and v.frame and not v.closed then count=count+1 end
         i=i+1
     end
     local canAdd=(count<D.multiWindowMax)
@@ -4884,12 +4915,14 @@ function D.multiWindowSnapshot(v)
     local seg=v.segment; local index=v.segmentIndex or 0
     if seg=="history" then seg="current"; index=0 end
     return {mode=v.mode,segment=seg,segmentIndex=index,locked=v.locked and true or false,
+        hidden=f.cawManuallyHidden and true or false,
         pfDock=v.pfDock and true or false,appearance=D.uiCopySettings and D.uiCopySettings(v.appearance) or nil,
         width=f:GetWidth(),height=f:GetHeight(),centerX=x,centerY=y}
 end
 
 function D.saveMultiWindows()
     initializeSavedVariables()
+    if not D.layoutRestored or not D.multiWindowsRestored or D.restoringMultiWindows then return end
     DB=CawDPSMeterDB
     CharDB=CawDPSMeterCharDB
     if not DB and not CharDB then return end
@@ -4900,8 +4933,9 @@ function D.saveMultiWindows()
         local v=D.multiWindows[i]
         -- RC35: a closed view is a tombstone and must never be re-serialized,
         -- even if an old frame object still exists until the next reload.
-        if v and not v.closed and v.frame and (v.frame:IsShown() or (not v.frame.cawManuallyHidden
-            and (v.frame.cawHiddenByContext or (v.frame.cawDockFree and v.frame.cawDockFree.hiddenByDock)))) then
+        -- Hidden is still an active layout (chat arrow, context rules or /cd hide).
+        -- Only explicitly closed windows leave the active list.
+        if v and not v.closed and v.frame then
             saved[out]=D.multiWindowSnapshot(v)
             out=out+1
         end
@@ -4919,13 +4953,16 @@ function D.saveMultiWindows()
         while si<=table.getn(saved) do
             local src=saved[si]
             dst.extraWindows[si]={mode=src.mode,segment=src.segment,segmentIndex=src.segmentIndex,locked=src.locked,pfDock=src.pfDock,
+                hidden=src.hidden,
                 width=src.width,height=src.height,centerX=src.centerX,centerY=src.centerY,
                 appearance=D.uiCopySettings and D.uiCopySettings(src.appearance) or nil}
             si=si+1
         end
     end
     copySavedWindows(DB)
-    copySavedWindows(CharDB)
+    saveWindowState()
+    DB.windowSettingsVersion=1
+    copyWindowSettings(DB,CharDB)
 end
 
 function D.removeMultiWindow(v)
@@ -5127,7 +5164,9 @@ function D.createMultiWindow(saved)
     while i<=D.multiWindowMax do if not D.multiWindows[i] then id=i; break end; i=i+1 end
     if not id then D.updateMultiAddButtons(); return nil end
     local closed=CawDPSMeterCharDB and CawDPSMeterCharDB.closedWindows
-    if not saved and type(closed)=="table" and table.getn(closed)>0 then saved=table.remove(closed,1) end
+    if not saved and type(closed)=="table" and table.getn(closed)>0 then
+        saved=table.remove(closed,1); saved.hidden=false
+    end
     local savedMode=(saved and saved.mode) or "healing"
     if not MODE_LABELS[savedMode] then savedMode="healing" end
     local savedSegment=(saved and saved.segment) or "current"
@@ -5151,7 +5190,7 @@ function D.createMultiWindow(saved)
         pf.nextUpdate=nil
         pf:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(pooled,true) end end)
         D.clampMultiWindow(pf); D.applyMultiWindowLock(pooled)
-        if D.uiSetMeterShown then D.uiSetMeterShown(pf,true) else pf:Show() end
+        if D.uiSetMeterShown then D.uiSetMeterShown(pf,not (saved and saved.hidden)) else pf:Show() end
         D.updateMultiWindow(pooled); D.updateMultiAddButtons()
         return pooled
     end
@@ -5201,7 +5240,7 @@ function D.createMultiWindow(saved)
 
     v.resetButton=CreateFrame("Button",nil,f); v.resetButton:SetWidth(17); v.resetButton:SetHeight(17); v.resetButton:SetPoint("RIGHT",v.closeButton,"LEFT",-3,0); flatPanel(v.resetButton,0.065,0.065,0.065,1,0.25); v.resetButton:SetBackdropColor(0.08,0.08,0.08,1)
     v.resetIcon=v.resetButton:CreateTexture(nil,"ARTWORK"); v.resetIcon:SetTexture("Interface\\AddOns\\CawDPSMeter\\Media\\CawReset.tga"); v.resetIcon:SetWidth(12); v.resetIcon:SetHeight(12); v.resetIcon:SetPoint("CENTER",v.resetButton,"CENTER",0,0)
-    v.resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset("current") end end)
+    v.resetButton:SetScript("OnClick",function() if D.uiConfirmReset then D.uiConfirmReset() end end)
     v.resetButton:SetScript("OnEnter",function() this:SetBackdropColor(0.15,0.15,0.15,1); local tt=D.getControlTooltip(); if tt then tt:SetOwner(this,"ANCHOR_TOP"); tt:SetText("Reset meter data",1,1,1); tt:Show() end end)
     v.resetButton:SetScript("OnLeave",function() this:SetBackdropColor(0.065,0.065,0.065,1); if D.controlTooltip then D.controlTooltip:Hide() end end)
 
@@ -5319,7 +5358,8 @@ function D.createMultiWindow(saved)
     f:SetScript("OnMouseWheel",function() D.scrollMultiWindow(v,arg1 and arg1>0 and -1 or 1) end)
     f:SetScript("OnUpdate",function() if not this.nextUpdate or GetTime()>=this.nextUpdate then this.nextUpdate=GetTime()+0.20; D.updateMultiWindow(v,true) end end)
     D.clampMultiWindow(f); D.layoutMultiWindow(v); D.applyMultiWindowLock(v)
-    if D.uiUpdateWindowVisibility then D.uiUpdateWindowVisibility(v) end
+    if D.uiSetMeterShown then D.uiSetMeterShown(f,not (saved and saved.hidden))
+    elseif D.uiUpdateWindowVisibility then D.uiUpdateWindowVisibility(v) end
     D.updateMultiWindow(v)
     D.updateMultiAddButtons()
     return v
@@ -5327,19 +5367,21 @@ end
 
 function D.restoreMultiWindows()
     if D.multiWindowsRestored then return end
-    D.multiWindowsRestored=true
+    D.restoringMultiWindows=true
     initializeSavedVariables(); DB=CawDPSMeterDB; CharDB=CawDPSMeterCharDB
 
-    -- Per-character state is authoritative when it exists, INCLUDING an empty
-    -- extraWindows table. RC31 treated an empty CharDB table as "missing" and
-    -- then fell back to a stale account-wide DB entry, which made a closed
-    -- second window reappear after relog/reload for some users.
+    -- Use the complete account layout after migration. Older installations
+    -- still honor an explicitly empty character list once, so previously closed
+    -- windows do not resurrect when moving to the shared layout.
     local list=nil
     local count=nil
     local source="none"
-    -- RC35: prefer explicit v3 state. The stored count is authoritative; an
-    -- explicit zero is a real user choice and must never fall back to stale data.
-    if CharDB and CharDB.extraWindowsExplicit then
+    -- The stored count is authoritative, including an explicit zero.
+    if DB and DB.windowSettingsVersion==1 then
+        list=DB.extraWindows or {}
+        count=tonumber(DB.extraWindowCount) or table.getn(list)
+        source="account-shared"
+    elseif CharDB and CharDB.extraWindowsExplicit then
         list=CharDB.extraWindows or {}
         count=tonumber(CharDB.extraWindowCount) or table.getn(list)
         source="character-v3"
@@ -5355,9 +5397,7 @@ function D.restoreMultiWindows()
         list=DB.extraWindows or {}
         count=tonumber(DB.extraWindowCount) or table.getn(list)
         source="account-legacy"
-    else
-        return
-    end
+    else list={}; count=0 end
 
     if count<0 then count=0 elseif count>3 then count=3 end
     local i=1
@@ -5367,6 +5407,7 @@ function D.restoreMultiWindows()
     end
     if D.diagLog then D.diagLog("INFO","MW_RESTORE","extra-window restore","source="..source.." count="..tostring(count),nil) end
 
+    D.restoringMultiWindows=nil; D.multiWindowsRestored=true
     D.saveMultiWindows()
 end
 
@@ -5882,7 +5923,7 @@ events:SetScript("OnEvent",function()
             applySyncMessage(arg4,arg2,arg3)
         end
     elseif event=="PLAYER_LOGOUT" then saveWindowState(); if D.saveMultiWindows then D.saveMultiWindows() end
-    elseif event=="PLAYER_ENTERING_WORLD" then restoreWindowState(); refreshRoster(); if applyWindowLock then applyWindowLock() end; D.applyCompactWindowLayout(); updateUI(); if D.restoreMultiWindows then D.restoreMultiWindows() end
+    elseif event=="PLAYER_ENTERING_WORLD" then if not D.layoutRestored then restoreWindowState() end; refreshRoster(); if applyWindowLock then applyWindowLock() end; D.applyCompactWindowLayout(); updateUI(); if D.restoreMultiWindows then D.restoreMultiWindows() end
     elseif event=="PARTY_MEMBERS_CHANGED" or event=="RAID_ROSTER_UPDATE" or event=="UNIT_PET" then refreshRoster() end
 end)
 
@@ -5948,7 +5989,7 @@ SlashCmdList["CAWDPS"]=function(msg)
     elseif msg=="show" then
         forEachMeterWindow(function(f) if D.uiSetMeterShown then D.uiSetMeterShown(f,true) else f:Show() end end)
         D.reopenClosedMultiWindows()
-    elseif msg=="reset" then resetFight(); D.inCombat=false; D.segment="current"; updateUI(); chat("Current combat data reset. Window layout kept.")
+    elseif msg=="reset" then D.uiResetData("all"); chat("All combat data reset. Window settings kept.")
     elseif msg=="resetpos" then resetWindowPosition(); saveWindowState(); updateUI(); chat("Window position reset.")
     elseif msg=="resetoverall" then D.overallSegment={actors={},duration=0,fights=0}; updateUI(); chat("Overall segment reset.")
     elseif msg=="current" then D.segment="current"; D.segmentIndex=0; D.scrollOffset=0; updateUI()

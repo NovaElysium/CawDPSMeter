@@ -62,7 +62,7 @@ function D.pfDockToggle(v)
     end
     if v then v.pfDock=not active else CawDPSMeterCharDB.pfDockMain=not active end
     D.pfDockUpdate()
-    if v then D.saveMultiWindows() end
+    D.saveMultiWindows()
 end
 
 function D.pfDockButton(button,v)
@@ -92,6 +92,7 @@ function D.pfDockToggleVisibility()
     CawDPSMeterCharDB=CawDPSMeterCharDB or {}
     CawDPSMeterCharDB.pfDockAlternate=not CawDPSMeterCharDB.pfDockAlternate
     D.pfDockUpdate()
+    D.saveMultiWindows()
     DEFAULT_CHAT_FRAME:AddMessage(CawDPSMeterCharDB.pfDockAlternate
         and "Caw: Docked windows now appear when the pfUI right chat is hidden. Use the chat arrow to switch."
         or "Caw: Docked windows now show and hide together with the pfUI right chat.")

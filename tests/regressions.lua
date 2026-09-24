@@ -44,6 +44,7 @@ for i=1,50 do local w=D.createMultiWindow(nil); assert(w.frame==oldFrame,"reuse 
 check(true,"50 create/close cycles reuse the same window")
 check(table.getn(FRAMES)==allocated,"create/close does not allocate more frames")
 check(oldFrame.scripts.OnUpdate==nil and v.rows[1].actor==nil,"closed windows stop ticking and release actors")
+CawDPSMeterDB.windowSettingsVersion=nil; CawDPSMeterCharDB.windowSettingsVersion=nil
 CawDPSMeterCharDB.extraWindowsExplicit=nil; CawDPSMeterCharDB.extraWindows={}; CawDPSMeterCharDB.extraWindowCount=0
 CawDPSMeterDB.extraWindowsExplicit=true; CawDPSMeterDB.extraWindowCount=1; CawDPSMeterDB.extraWindows={{mode="damage"}}
 D.multiWindowsRestored=false; D.restoreMultiWindows()

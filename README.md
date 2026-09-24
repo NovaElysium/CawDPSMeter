@@ -33,6 +33,9 @@ did not see. Up to four independent windows share the same combat data.
 
 ## Interface
 
+See the [1.1.5 release notes](RELEASE_NOTES_1.1.5.md) for the latest window,
+reset and Threat fixes.
+
 Left-click a player bar for an ability breakdown with player and segment selection.
 Scroll the player list with the mouse wheel anywhere over the bars or their
 surrounding area. Each meter window keeps its own scroll position.
@@ -98,13 +101,16 @@ diagnostics together with the existing error log.
 Longer pages scroll. Changes are saved automatically. The colour picker previews
 changes immediately; Cancel restores the previous colour. **Reset page** restores
 only that page's defaults. **Copy to all windows** copies the selected window's
-full appearance and display options to every meter.
+size, number of bars, lock, appearance and display options to every meter.
+Positions, docking and selected views stay independent.
 Meters use near-black pfUI-style surfaces, fine borders and muted gold highlights.
 Dropdown labels use larger, bright text; window transparency remains adjustable.
 Settings use sliders, number fields and checkboxes, with a preview and a window
 selector. Player details keep spells, players and segments in separate lists;
 the statistics on the right follow the selected spell and mode. Report and reset
 are available through their header buttons or the **...** menu in narrow windows.
+**Reset** clears all combat data (Current, Overall and the saved encounter list)
+in every window after confirmation. Window settings are kept.
 Small meters keep just the mode, encounter selector and **...** in the header.
 Encounter menus fit their entries; scrolling controls appear above and below the
 list only when needed. Hover a selector to read the full selected label.
@@ -209,7 +215,8 @@ A persistent watermark sits behind the player bars without intercepting clicks.
 
 Shift-right-click any lock icon to switch visibility modes for all docked windows.
 The default follows chat visibility; alternate mode shows Caw when chat is hidden
-and hides Caw when chat is shown. This preference is saved per character. Both
+and hides Caw when chat is shown. Window layouts and docking are shared across
+characters, including the number of meters and each one's appearance. Both
 normal hiding and pfUI's alpha-only hiding are supported.
 
 Use the **+** button for additional windows. Each window keeps its own mode, size,
@@ -219,6 +226,8 @@ and appearance. **+ / Add window** restores the most recently closed window;
 `/cd show` reopens closed meters together. Closed extra windows stay closed on
 login or reload. Automatic hiding and pfUI chat visibility still apply when
 reopening a window.
+Hidden windows remain saved, including when hidden through `/cd hide` or pfUI's
+chat arrow. Character-specific recording and sync preferences remain independent.
 
 Right-click a window's lock icon to dock or undock it at the pfUI right chat.
 Multiple docked windows sit edge-to-edge side by side inside the right chat area,
@@ -292,6 +301,12 @@ disabled it. `/cdthreatcal off` disables recording and its automatic startup;
 `/cdthreatcal on` enables it again. A startup message confirms active recording.
 No files are uploaded automatically. With TWThreat loaded, Caw passively records
 its replies; standalone calibration can query eligible combat targets.
+Missing server replies do not print chat warnings. Retries slow down progressively
+to a maximum 30-second pause for that target and resume normally after a matching
+fresh reply. New targets are queried promptly without inheriting another mob's
+delay. Any outstanding request and its short reply guard finish first. Returning
+to a recently failed target preserves its delay; fast target switching cannot
+bypass the shared request limit.
 
 The latest 3 sessions are kept, each limited to 2,000 model events, 1,500 casts,
 800 snapshots, 300 actor contexts and bounded supporting traces. These caps were lowered after a live account file reached ~30 MB; a truncated
@@ -310,7 +325,7 @@ names and GUIDs; review them before sharing publicly.
 | `/cd` | toggle the window |
 | `/cd show` / `/cd hide` | show / hide |
 | `/cd lock` / `/cd unlock` | lock / unlock the frame |
-| `/cd reset` | clear the current fight |
+| `/cd reset` | clear all combat data, keeping window settings |
 | `/cd resetoverall` | clear the overall segment |
 | `/cd resetpos` | move the window back to the default position |
 | `/cd current` / `/cd last` / `/cd overall` | switch segment |

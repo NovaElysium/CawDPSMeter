@@ -779,7 +779,7 @@ function D.uiFormatRow(row,value,duration,total,mode)
     end
 end
 function D.uiPersist()
-    if not D.savedVariablesReady then return end
+    if not D.savedVariablesReady or not D.layoutRestored or not D.multiWindowsRestored or D.restoringMultiWindows then return end
     CawDPSMeterDB.appearance=D.uiCopySettings(D.uiSettings())
     D.uiSaveMain(); D.saveMultiWindows()
 end
@@ -1228,16 +1228,14 @@ function D.refreshOptions()
         p.infoNote:ClearAllPoints(); p.infoNote:SetPoint("TOPLEFT",p,"TOPLEFT",584,p.page=="Threat" and -187 or -145)
     else p.inputStatus:Hide(); p.infoNote:Hide(); p.preview:Show(); updatePreview(p) end
 end
-function D.uiConfirmReset(kind)
+function D.uiConfirmReset()
     if not D.resetDialog then
         local f=D.uiDialog("CawResetDialog","Reset data",390,158); D.resetDialog=f
-        f.label=D.uiText(f,"",18,-58,354,12); f.label:SetHeight(35)
-        D.uiButton(f,"Cancel",166,-116,94,function() f:Hide() end)
-        D.uiButton(f,"Reset",270,-116,100,function() D.uiResetData(f.kind); f:Hide() end)
+        f.label=D.uiText(f,"Clear all combat data in every window? Window settings are kept.",18,-54,354,12)
+        f.label:SetHeight(48)
+        f.cancelButton=D.uiButton(f,"Cancel",166,-116,94,function() f:Hide() end)
+        f.confirmButton=D.uiButton(f,"Reset",270,-116,100,function() D.uiResetData("all"); f:Hide() end)
     end
-    D.resetDialog.kind=kind
-    local label=kind=="all" and "all combat data" or (kind=="overall" and "Overall" or "Current")
-    D.resetDialog.label:SetText("Clear "..label.." in all windows?")
     D.resetDialog:Show()
 end
 function D.openOptions(v)
@@ -1430,10 +1428,17 @@ function D.openOptions(v)
         end
         p.copyButton=D.uiButton(p,"Copy to all windows",368,-449,160,function()
             local source=D.uiCopySettings(D.uiSettings(p.view)); D.appearance=D.uiCopySettings(source)
-            for _,view in pairs(D.multiWindows) do view.appearance=D.uiCopySettings(source); D.layoutMultiWindow(view) end
+            local f=p.view and p.view.frame or D.window
+            local width,height=f:GetWidth(),f:GetHeight()
+            local locked=p.view and p.view.locked or (not p.view and D.locked)
+            D.window:SetWidth(width); D.window:SetHeight(height); D.uiSetLock(nil,locked)
+            for _,view in pairs(D.multiWindows) do
+                view.appearance=D.uiCopySettings(source)
+                view.frame:SetWidth(width); view.frame:SetHeight(height); D.uiSetLock(view,locked)
+            end
             D.uiRefresh(nil); D.refreshOptions()
         end)
-        D.uiTooltip(p.copyButton,"Copy this window's appearance and display options from all pages to every Caw window.")
+        D.uiTooltip(p.copyButton,"Copy this window's size, bar count, lock, appearance and display options to every Caw window. Positions, docking and selected views stay separate.")
         p.resetButton=D.uiButton(p,"Reset page",539,-449,105,function()
             if p.page=="Threat" then
                 CawDPSMeterCharDB.threatAlerts=nil; D.threatAlertEpisode=nil; D.threatAlertPreviewUntil=nil; D.threatAlertStop()

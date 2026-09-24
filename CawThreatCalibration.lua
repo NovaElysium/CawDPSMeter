@@ -250,6 +250,8 @@ function D.threatCalStart()
     D.threatCalNewSession()
     D.threatCalEnabled=true
     D.threatCalApiRetryAt=0; D.threatCalTimeoutStreak=0
+    D.threatCalTargetRetries={}; D.threatCalSendAfter=0
+    D.threatCalReplyGuardUntil=0
     D.threatCalTargetState=nil; D.threatCalObservedRequest=nil
     D.threatCalObserveTarget()
     D.threatCalInstallObserver()
@@ -259,6 +261,16 @@ function D.threatCalObserveTarget()
     local guid,name,classification=D.threatCalTarget()
     local now=D.threatCalNow(); local state=D.threatCalTargetState
     if not state or state.guid~=guid or state.segmentSerial~=(D.segmentSerial or 0) then
+        if not state or state.guid~=guid then
+            -- Failure delays belong to the mob that failed, not the next pull.
+            -- Keep recent failed targets so tabbing away and back cannot reset
+            -- their backoff. The shared send gate and pending request stay intact.
+            local retry=guid and D.threatCalTargetRetries and D.threatCalTargetRetries[guid]
+            D.threatCalTimeoutStreak=retry and retry.streak or 0
+            D.threatCalApiRetryAt=retry and retry.untilTime or 0
+            if retry then retry.touched=now end
+            D.threatCalNextRequest=math.min(D.threatCalNextRequest or now,now+0.25)
+        end
         state={guid=guid,name=name,classification=classification,since=now,generation=(state and state.generation or 0)+1,segmentSerial=D.segmentSerial or 0}
         D.threatCalTargetState=state
         local s=D.threatCalEnabled and D.threatCalSession
@@ -402,11 +414,12 @@ end
 function D.threatCalTakeRequestForResponse()
     local q=D.threatCalPendingRequests or {}
     local now=D.threatCalNow()
-    while table.getn(q)>0 do
-        local r=table.remove(q,1)
-        if r and now-(r.sentAt or 0)<=1.25 then return r end
-        D.threatCalAttributionUncertain=true
-    end
+    local r=q[1]
+    if not r then return nil end
+    if now-(r.sentAt or 0)<=1.25 then return table.remove(q,1) end
+    -- Leave expired requests for the send loop to time out. A late response
+    -- must not silently discard the pending request and bypass its reply guard.
+    D.threatCalAttributionUncertain=true
     return nil
 end
 
@@ -454,9 +467,16 @@ function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
     -- Display follows a recent locally observed request (including TWThreat).
     -- Calibration keeps its stricter uncertainty flags and never overwrites the model.
     local displayReq=req.serial and req or observed
-    if D.serverThreatPublish then D.serverThreatPublish(rows,displayReq,state) end
-    if displayReq and now-displayReq.sentAt<=1.25 then
+    local published=D.serverThreatPublish and D.serverThreatPublish(rows,displayReq,state)
+    if published then
+        if D.threatCalTargetRetries then D.threatCalTargetRetries[state.guid]=nil end
         D.threatCalTimeoutStreak=0; D.threatCalApiRetryAt=0
+        D.threatCalNextRequest=now+0.50
+    elseif req.serial then
+        -- A reply to the previous target consumes its request, but must not let
+        -- a second request immediately reuse that response window. TWTv4 has
+        -- no request/target ID in the reply.
+        D.threatCalReplyGuardUntil=math.max(D.threatCalReplyGuardUntil or 0,(req.sentAt or now)+2)
     end
     if not session then return end
     local snaps=session.snapshots
@@ -510,9 +530,31 @@ function D.threatCalRecordSnapshot(msg,prefix,channel,sender)
     table.insert(snaps,out)
     D.threatCalResponses=(D.threatCalResponses or 0)+1
     D.threatCalSession.responses=(D.threatCalSession.responses or 0)+1
-    D.threatCalTimeoutStreak=0; D.threatCalApiRetryAt=0
 end
 
+local function delayThreatRetry(now,guid)
+    D.threatCalTargetRetries=D.threatCalTargetRetries or {}
+    local retries=D.threatCalTargetRetries
+    local retry=guid and retries[guid]
+    if not retry then
+        -- Only retain a small set of recent failures, regardless of play time.
+        local count,oldest,oldestAt=0,nil,nil
+        for key,entry in pairs(retries) do
+            count=count+1
+            if not oldestAt or entry.touched<oldestAt then oldest=key; oldestAt=entry.touched end
+        end
+        if count>=16 and oldest then retries[oldest]=nil end
+        retry={streak=0}
+        if guid then retries[guid]=retry end
+    end
+    retry.streak=retry.streak+1; retry.touched=now
+    retry.untilTime=now+math.min(30,2^math.min(retry.streak,5))
+    local state=D.threatCalTargetState
+    if state and state.guid==guid then
+        D.threatCalTimeoutStreak=retry.streak; D.threatCalApiRetryAt=retry.untilTime
+    end
+    return retry
+end
 function D.threatCalSendRequest()
     if IsAddOnLoaded and IsAddOnLoaded("TWThreat") then
         D.threatCalAttributionUncertain=true
@@ -522,6 +564,7 @@ function D.threatCalSendRequest()
     -- dropped response would otherwise shift the queue and silently bind the
     -- next server snapshot to the wrong mob.
     local now=D.threatCalNow()
+    D.threatCalObserveTarget()
     D.threatCalPendingRequests=D.threatCalPendingRequests or {}
     if table.getn(D.threatCalPendingRequests)>0 then
         local pending=D.threatCalPendingRequests[1]
@@ -530,17 +573,18 @@ function D.threatCalSendRequest()
         D.threatCalTimedOutRequests=(D.threatCalTimedOutRequests or 0)+1
         D.threatCalLastTimeoutAt=now
         D.threatCalAttributionUncertain=true
-        D.threatCalTimeoutStreak=(D.threatCalTimeoutStreak or 0)+1
-        D.threatCalApiRetryAt=now+math.min(5,2^math.min(D.threatCalTimeoutStreak,3))
+        local retry=delayThreatRetry(now,pending.targetGuid)
+        D.threatCalReplyGuardUntil=now+0.75
         if D.threatCalEnabled and D.threatCalSession then D.threatCalSession.timedOutRequests=(D.threatCalSession.timedOutRequests or 0)+1 end
-        D.threatCalTrace("transport",{kind="timeout",serial=pending.serial,targetGuid=pending.targetGuid,retryIn=D.threatCalApiRetryAt-now})
-        if D.threatCalTimeoutStreak==1 and D.diagCal then D.diagCal("API_TIMEOUT","Threat API request timed out; retries use bounded backoff.") end
-        if D.threatCalTimeoutStreak==3 and DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffff00Caw:|r No matching server threat response. Local recording continues; API retries slowed.") end
+        D.threatCalTrace("transport",{kind="timeout",serial=pending.serial,targetGuid=pending.targetGuid,retryIn=retry.untilTime-now})
+        if retry.streak==1 and D.diagCal then D.diagCal("API_TIMEOUT","Threat API request timed out; retries use bounded backoff.") end
         return false,"request timeout"
     end
     -- Short quarantine after a timeout reduces the chance that a very late
     -- response is mistaken for the next request.
     if now-(D.threatCalLastTimeoutAt or 0)<0.75 then return false,"timeout quarantine" end
+    if now<(D.threatCalReplyGuardUntil or 0) then return false,"previous target quarantine" end
+    if now<(D.threatCalSendAfter or 0) then return false,"request rate limit" end
     if now<(D.threatCalApiRetryAt or 0) then return false,"timeout backoff" end
     local ok,channel=D.threatCalApiEligible()
     if not ok then return false,channel end
@@ -552,8 +596,14 @@ function D.threatCalSendRequest()
     if not tg then if D.diagCal then D.diagCal("TARGET_GUID","Eligible threat target has no usable GUID.") end; return false,"target guid unavailable" end
     -- TWThreat 1.3.0 defaults to five visible bars and requests visibleBars-1.
     D.threatCalQueueRequest(tg,tn,tc,channel)
+    D.threatCalSendAfter=now+0.50
     local success,err=pcall(sender,"TWT_UDTSv4","limit=4",channel)
-    if not success then D.threatCalObservedRequest=nil; D.threatCalPendingRequests={}; if D.diagWarn then D.diagWarn("API_SEND_ERROR",tostring(err),"channel="..tostring(channel)) end; return false,tostring(err) end
+    if not success then
+        D.threatCalObservedRequest=nil; D.threatCalPendingRequests={}; delayThreatRetry(now,tg)
+        D.threatCalSendAfter=now+2
+        if D.threatCalTimeoutStreak==1 and D.diagWarn then D.diagWarn("API_SEND_ERROR",tostring(err),"channel="..tostring(channel)) end
+        return false,tostring(err)
+    end
     D.threatCalTrace("transport",{kind="request",prefix="TWT_UDTSv4",payload="limit=4",channel=channel,targetGuid=tg,target=tn,serial=D.threatCalRequestSerial})
     D.threatCalRequests=(D.threatCalRequests or 0)+1
     if D.threatCalEnabled and D.threatCalSession then D.threatCalSession.requests=(D.threatCalSession.requests or 0)+1 end
@@ -649,9 +699,10 @@ end)
 
 F:SetScript("OnUpdate",function()
     if D.savedVariablesReady and D.threatCalNow()>=(D.threatCalNextRequest or 0) then
-        D.threatCalNextRequest=D.threatCalNow()+0.50
         D.threatCalObserveTarget()
         D.threatCalSendRequest()
+        D.threatCalNextRequest=math.max(D.threatCalNow()+0.50,D.threatCalApiRetryAt or 0,
+            D.threatCalSendAfter or 0,D.threatCalReplyGuardUntil or 0)
     end
 end)
 
