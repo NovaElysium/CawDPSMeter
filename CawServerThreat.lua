@@ -8,6 +8,9 @@ function D.serverThreatPublish(rows,req,state)
         local token,unit,unitIsPet=D.threatCalClassForName(r.name)
         local localActor,count,ambiguous=D.threatCalActorByName(r.name,state.guid)
         local guid=not ambiguous and localActor and localActor.guid or nil
+        if localActor and not ambiguous and not localActor.isPet and D.threatFeignServerCheck then
+            D.threatFeignServerCheck(localActor,state.guid,r.threat,req.sentAt)
+        end
         local ownerClass=nil
         if unitIsPet and unit then
             local ownerUnit=unit=="pet" and "player" or string.gsub(unit,"pet","")

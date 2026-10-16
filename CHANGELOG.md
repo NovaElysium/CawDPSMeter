@@ -6,6 +6,12 @@ and [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- A resisted Feign Death that leaves no combat-log line no longer wipes the
+  Hunter's local Threat. The reset is reversed for that enemy when it still
+  attacks the player in melee (hit, crit or miss, from 0.4 s after the cast) or
+  when a server Threat reply requested after the cast shows the value never
+  dropped. Area spells and swings already in flight do not count. Recorded by a
+  boss fight where Caw showed 20 while the server still held 1,858.
 - Reset no longer switches windows from Overall to Current. Every window keeps
   its Current or Overall selection; only a selected saved fight falls back to
   Current because the saved fights are cleared.

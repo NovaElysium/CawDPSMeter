@@ -432,14 +432,20 @@ function D.threatPrunePending()
     for guid,p in D.threatPendingReset do if now-p>2 then D.threatPendingReset[guid]=nil end end
     for guid,p in D.threatFeignEarly do if now-p>0.5 then D.threatFeignEarly[guid]=nil end end
     for guid,p in D.threatFeignCommitted do if now-p>2 then D.threatFeignCommitted[guid]=nil end end
-    for guid,p in D.threatFeignUndo do if now-p.time>2 then D.threatFeignUndo[guid]=nil end end
+    for guid,p in D.threatFeignUndo do if now-p.time>D.threatFeignUndoWindow then D.threatFeignUndo[guid]=nil end end
 end
 
 -- A completed FD cast is observable on RavenCraft even when no RAW success is
--- emitted. Keep a short per-target baseline to reverse explicit failure/resist.
-function D.threatFeignRestore(casterGuid,targetGuid)
+-- emitted. Keep a short per-target baseline to reverse a failed or resisted
+-- feign: explicit failure lines, an enemy that keeps meleeing the feigned
+-- player, or a server reply showing the threat was never dropped.
+D.threatFeignUndoWindow=3
+D.threatFeignHitMinDelay=0.4    -- a swing already in flight can still land after a real success
+D.threatFeignServerDelay=0.3    -- only replies requested after the cast describe the post-feign state
+D.threatFeignServerMinBaseline=50
+function D.threatFeignRestore(casterGuid,targetGuid,reason)
     local saved=D.threatFeignUndo[casterGuid]
-    if not saved or GetTime()-saved.time>2 then return false end
+    if not saved or GetTime()-saved.time>D.threatFeignUndoWindow then return false end
     local info=D.guidToActor[casterGuid]
     local actor=info and D.actors[info.key]
     if actor~=saved.actor then return false end
@@ -453,11 +459,44 @@ function D.threatFeignRestore(casterGuid,targetGuid)
             actor.threatSpecial[tg]=(actor.threatSpecial[tg] or 0)+v.special
             local ab=actor.threatAbilities[tg]
             ab["Feign Death resisted"]=(ab["Feign Death resisted"] or 0)+v.total
-            if D.threatCalRecordEvent then D.threatCalRecordEvent({kind="reset-reversal",source="Feign Death failed/resisted",actor=actor.name,guid=actor.guid,targetGuid=tg,before=before,after=actor.threat[tg],delta=v.total}) end
+            if D.threatCalRecordEvent then D.threatCalRecordEvent({kind="reset-reversal",source="Feign Death failed/resisted",reason=reason or "explicit",actor=actor.name,guid=actor.guid,targetGuid=tg,before=before,after=actor.threat[tg],delta=v.total}) end
             saved.targets[tg]=nil; restored=true
         end
     end
     return restored
+end
+
+-- Some resists produce no combat-log line. A real Feign Death makes enemies stop
+-- attacking, so a melee swing (hit, crit or miss) from an enemy that held threat
+-- reaching the player shortly afterwards proves the feign failed. Spell damage is
+-- ignored because area spells still hit a feigned player.
+function D.threatFeignHitCheck(text)
+    if not text or not next(D.threatFeignUndo) then return end
+    local _,_,src=string.find(text,"^(0x[%x]+) hits you for ")
+    if not src then _,_,src=string.find(text,"^(0x[%x]+) crits you for ") end
+    if not src then _,_,src=string.find(text,"^(0x[%x]+) misses you%.") end
+    if not src then _,_,src=string.find(text,"^(0x[%x]+) attacks%. You ") end
+    if not src or not UnitExists then return end
+    local ok,exists,guid=pcall(UnitExists,"player")
+    if not ok or not exists or not guid then return end
+    local saved=D.threatFeignUndo[guid]
+    if not saved or not saved.targets[src] then return end
+    if GetTime()-saved.time<D.threatFeignHitMinDelay then return end
+    D.threatFeignRestore(guid,src,"enemy-still-attacking")
+end
+
+-- The server value is authoritative. A reply requested after the cast that still
+-- shows far more threat than the post-reset estimate means the feign dropped none.
+function D.threatFeignServerCheck(actor,targetGuid,serverValue,sentAt)
+    serverValue=tonumber(serverValue)
+    if not actor or not targetGuid or not serverValue or not next(D.threatFeignUndo) then return end
+    local casterGuid,saved,g,s
+    for g,s in D.threatFeignUndo do if s.actor==actor then casterGuid=g; saved=s end end
+    local v=saved and saved.targets[targetGuid]
+    if not v or v.total<D.threatFeignServerMinBaseline then return end
+    if (tonumber(sentAt) or 0)<saved.time+D.threatFeignServerDelay then return end
+    local localValue=actor.threat and actor.threat[targetGuid] or 0
+    if serverValue>=localValue+v.total*0.5 then D.threatFeignRestore(casterGuid,targetGuid,"server-kept-threat") end
 end
 
 function D.threatFeignRawFailure(text)

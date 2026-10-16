@@ -5844,6 +5844,7 @@ events:SetScript("OnEvent",function()
         D.threatEventTarget=nil
         if D.threatCalRecordRaw then D.threatCalRecordRaw(arg1,arg2) end
         if D.threatFeignRawFailure then D.threatFeignRawFailure(arg2) end
+        if D.threatFeignHitCheck then D.threatFeignHitCheck(arg2) end
         if arg2 then
             local _,_,castSource,castSpell=string.find(arg2,"^(0x[%x]+)'s (.-) hits ")
             if not castSource then _,_,castSource,castSpell=string.find(arg2,"^(0x[%x]+)'s (.-) crits ") end
