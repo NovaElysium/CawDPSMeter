@@ -5,6 +5,11 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Reset no longer switches windows from Overall to Current. Every window keeps
+  its Current or Overall selection; only a selected saved fight falls back to
+  Current because the saved fights are cleared.
+
 ## [1.1.5] - 2026-09-24
 
 ### Fixed

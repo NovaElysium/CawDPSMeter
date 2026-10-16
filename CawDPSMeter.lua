@@ -4785,8 +4785,14 @@ D.uiResetData=function(kind)
     if kind=="current" or kind=="all" then resetFight(); D.inCombat=false; D.scrollOffset=0 end
     if kind=="overall" or kind=="all" then D.overallSegment={actors={},duration=0,fights=0} end
     if kind=="all" then
-        D.fightHistory={}; selectSegment("current",0)
-        for _,v in pairs(D.multiWindows or {}) do v.segment="current"; v.segmentIndex=0; v.scrollOffset=0 end
+        -- Reset clears data, not window settings: every window keeps its Current or
+        -- Overall selection. Only a selected saved fight no longer exists.
+        D.fightHistory={}
+        if D.segment=="history" then selectSegment("current",0) end
+        for _,v in pairs(D.multiWindows or {}) do
+            if v.segment=="history" then v.segment="current"; v.segmentIndex=0 end
+            v.scrollOffset=0
+        end
     end
     D.uiRefreshMeters()
 end

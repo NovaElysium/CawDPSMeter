@@ -22,6 +22,13 @@ v.appearance=D.uiCopySettings(nil)
 D.uiSelectMain("overall",0); v.segment="overall"; D.uiSettings(v).autoCurrent=false
 NOW=NOW+10; fire(D.events,"PLAYER_REGEN_DISABLED")
 check(D.segment=="overall" and v.segment=="overall","combat event preserves Overall in every window by default")
+D.uiResetData("all")
+check(D.segment=="overall" and v.segment=="overall" and CawDPSMeterDB.segment=="overall","Reset keeps Overall selected in every window")
+D.uiSelectMain("current",0); v.segment="current"; D.uiResetData("all")
+check(D.segment=="current" and v.segment=="current","Reset keeps Current selected in every window")
+D.fightHistory={{actors={},duration=0}}; D.uiSelectMain("history",1); v.segment="history"; v.segmentIndex=1; D.uiResetData("all")
+check(D.segment=="current" and v.segment=="current" and v.segmentIndex==0,"Reset falls back to Current only when the selected saved fight is gone")
+D.uiSelectMain("overall",0); v.segment="overall"
 D.uiSettings(v).autoCurrent=true; D.uiCombatSelection()
 check(D.segment=="overall" and v.segment=="current","automatic Current selection is a per-window opt-in")
 D.uiSettings().autoCurrent=true; D.uiCombatSelection(); D.uiSettings().autoCurrent=false
