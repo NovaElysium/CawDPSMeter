@@ -33,8 +33,8 @@ did not see. Up to four independent windows share the same combat data.
 
 ## Interface
 
-See the [1.1.5 release notes](RELEASE_NOTES_1.1.5.md) for the latest window,
-reset and Threat fixes.
+See the [1.1.6 release notes](RELEASE_NOTES_1.1.6.md) for the new own-bar option and
+the latest Reset and Threat fixes.
 
 Left-click a player bar for an ability breakdown with player and segment selection.
 Scroll the player list with the mouse wheel anywhere over the bars or their

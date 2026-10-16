@@ -5,6 +5,8 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-10-16
+
 ### Added
 - **Always show my own bar** (Settings > General, per window, off by default).
   While your own bar is scrolled out of view, it takes the last row and keeps

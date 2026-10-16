@@ -1,10 +1,10 @@
--- Caw DPS Meter v1.1.5
+-- Caw DPS Meter v1.1.6
 -- RavenCraft/Octo / WoW 1.12 + SuperWoW/SuperAPI
 -- Lua 5.0 compatible. RAW_COMBATLOG based damage + utility meter.
 
 CAW_DPS_METER = CAW_DPS_METER or {}
 local D = CAW_DPS_METER
-D.version = "1.1.5"
+D.version = "1.1.6"
 function D.parserEnabled()
     return not CawDPSMeterCharDB or CawDPSMeterCharDB.parserEnabled~=false
 end
