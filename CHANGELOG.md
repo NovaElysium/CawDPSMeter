@@ -5,6 +5,13 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Always show my own bar** (Settings > General, per window, off by default).
+  While your own bar is scrolled out of view, it takes the last row and keeps
+  your real rank. A bar already in view stays where it is, so nobody appears
+  twice, and the scroll range grows by one step so every player stays
+  reachable. Works in the main and extra windows and in every mode.
+
 ### Fixed
 - A resisted Feign Death that leaves no combat-log line no longer wipes the
   Hunter's local Threat. The reset is reversed for that enemy when it still

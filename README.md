@@ -180,6 +180,8 @@ option is off by default so Caw remains fully interactive in the normal layout.
   with automatic peer discovery and talent-rank exchange
 - Compact narrow-window layout with adaptive actor-name truncation to keep values
   readable
+- Optional **Always show my own bar** (Settings > General): your bar takes the
+  last row, with your real rank, while it is scrolled out of view
 - Persistent window layout, lock state and selected mode
 
 ## Requirements

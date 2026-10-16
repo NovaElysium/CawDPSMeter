@@ -6,7 +6,7 @@ D.uiFont=FONT
 D.uiAccent={0.72,0.64,0.43}
 D.uiDefaults={scale=1,rowHeight=23,rowGap=3,fontSize=11,opacity=0.94,barOpacity=0.85,
     watermark=0.40,icons=true,ranks=true,classNames=false,rate=true,percent=false,
-    autoCurrent=false,hover=true,hideSolo=false,hideParty=false,hideRaid=false,hideBattleground=false,
+    autoCurrent=false,alwaysShowMe=false,hover=true,hideSolo=false,hideParty=false,hideRaid=false,hideBattleground=false,
     hideInCombat=false,hideOutOfCombat=false,
     headerHeight=24,headerFontSize=11,headerOpacity=1,
     footerHeight=20,footerFontSize=9,footerOpacity=0.94,showFooter=true,
@@ -861,6 +861,7 @@ optionsGroup("General","All windows",false,{
     {"combatSyncEnabled","Share data with other Caw users",0,"combatSync","Sync off keeps local recording active. Server threat and talent sharing remain available. Data sharing pauses while Record combat is off."}})
 optionsGroup("General","Selected window",false,{
     {"autoCurrent","Switch to Current at combat start",0,"bool","Automatically selects the current fight in this window when combat starts."},
+    {"alwaysShowMe","Always show my own bar",0,"bool","Keeps your own bar in the last row, with your real rank, while it is scrolled out of view."},
     {"hover","Show player details on hover",0,"bool","Shows the ability breakdown when you move the mouse over a player bar."}})
 optionsGroup("Threat","Warning effects",false,{
     {"glow","Flash the screen edges",0,"alertBool"},{"sound","Play a warning sound",0,"alertBool"}})

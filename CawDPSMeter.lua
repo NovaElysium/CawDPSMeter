@@ -3231,13 +3231,14 @@ do
         end
         return c.rows,table.getn(c.rows),c
     end
-    function D.meterRowsUnchanged(f,c,duration,offset,mode,periodic)
+    function D.meterRowsUnchanged(f,c,duration,offset,mode,periodic,pinned)
         if not c then f.cawRowsState=nil; return false end
         local s=f.cawRowsState
         if not s then s={}; f.cawRowsState=s end
         local same=periodic and mode~="threat" and s.cache==c and s.revision==c.revision
-            and s.duration==duration and s.offset==offset and s.width==f:GetWidth() and s.height==f:GetHeight()
-        s.cache=c; s.revision=c.revision; s.duration=duration; s.offset=offset
+            and s.duration==duration and s.offset==offset and s.pinned==pinned
+            and s.width==f:GetWidth() and s.height==f:GetHeight()
+        s.cache=c; s.revision=c.revision; s.duration=duration; s.offset=offset; s.pinned=pinned
         s.width=f:GetWidth(); s.height=f:GetHeight()
         return same
     end
@@ -3249,6 +3250,40 @@ local function sortedActors()
     local i
     for i=1,n do rows[i].actor._cawDisplayValue=rows[i].value end
     return c.actorList,n,c
+end
+
+-- "Always show me": when the window cannot show the local player's bar, the last
+-- row is replaced by it and keeps the player's real rank. A bar already in view
+-- stays in place, so no player appears twice. The scroll range grows by one step
+-- so the actor covered by the pinned row can still be reached.
+function D.uiIsSelf(a)
+    if not a or a.isPet then return false end
+    local pg=safeUnitGUID("player")
+    if pg and (a.guid==pg or a.key==pg) then return true end
+    if a.key==D.selfKey then return true end
+    local pn=safeUnitName("player")
+    return pn~=nil and a.name==pn
+end
+-- Returns the local player's rank when the pinned row can apply, otherwise nil.
+-- list holds actors (main window) or rows with an .actor field (extra windows).
+function D.uiPinState(list,count,visible,settings,isRows)
+    if not settings or not settings.alwaysShowMe or visible<2 or count<=visible then return nil end
+    local i=1
+    while i<=count do
+        local a=list[i]; if isRows then a=a and a.actor end
+        if D.uiIsSelf(a) then return i end
+        i=i+1
+    end
+    return nil
+end
+function D.uiMaxOffset(count,visible,selfRank)
+    local m=count-visible; if m<0 then m=0 end
+    if selfRank and selfRank<=count-visible then m=m+1 end
+    return m
+end
+function D.uiRowIndex(r,offset,visible,selfRank)
+    if selfRank and r==visible and (selfRank<offset+1 or selfRank>offset+visible) then return selfRank end
+    return offset+r
 end
 local function sortedTable(tbl,field)
     local list={}; local n=0; if not tbl then return list,0 end; local name,s
@@ -4597,14 +4632,15 @@ end
 
 -- Mouse-wheel scrolling reuses the small row pool for the full raid list,
 -- without reserving a column for separate scroll controls.
-local function clampScroll(total)
-    local maxOffset=total-visibleRowCount(); if maxOffset<0 then maxOffset=0 end
+local function clampScroll(total,selfRank)
+    local maxOffset=D.uiMaxOffset(total,visibleRowCount(),selfRank)
     if D.scrollOffset<0 then D.scrollOffset=0 end
     if D.scrollOffset>maxOffset then D.scrollOffset=maxOffset end
     return maxOffset
 end
 local function scrollBy(delta)
-    local list,total=sortedActors(); local maxOffset=clampScroll(total)
+    local list,total=sortedActors()
+    local maxOffset=clampScroll(total,D.uiPinState(list,total,visibleRowCount(),D.uiSettings and D.uiSettings(),false))
     D.scrollOffset=D.scrollOffset+delta
     if D.scrollOffset<0 then D.scrollOffset=0 end
     if D.scrollOffset>maxOffset then D.scrollOffset=maxOffset end
@@ -4738,13 +4774,15 @@ updateUI=function(periodic)
         end
     end
     if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(D.mainView) end
-    if D.meterRowsUnchanged(frame,cache,dur,D.scrollOffset,D.mode,periodic) then return end
+    local rowsVisible=visibleRowCount()
+    local selfRank=D.uiPinState(list,count,rowsVisible,D.uiSettings and D.uiSettings(),false)
+    if D.meterRowsUnchanged(frame,cache,dur,D.scrollOffset,D.mode,periodic,selfRank) then return end
     local displayTotal=0
     for _,actor in ipairs(list) do displayTotal=displayTotal+(actor._cawDisplayValue or 0) end
-    local rowsVisible=visibleRowCount(); clampScroll(count)
+    clampScroll(count,selfRank)
     local r=1
     while r<=MAX_ROWS do
-        local row=D.rows[r]; local absoluteIndex=D.scrollOffset+r; local a=nil
+        local row=D.rows[r]; local absoluteIndex=D.uiRowIndex(r,D.scrollOffset,rowsVisible,selfRank); local a=nil
         if r<=rowsVisible then a=list[absoluteIndex] end
         if a then
             row.actor=a; row.frame:Show(); local value
@@ -5129,25 +5167,27 @@ function D.updateMultiWindow(v,periodic)
         else v.summary:SetText("Total: "..tostring(total)) end
     end
     if D.uiUpdateMeterFooter then D.uiUpdateMeterFooter(v) end
-    if D.meterRowsUnchanged(v.frame,cache,dur,v.scrollOffset,v.mode,periodic) then return end
     local h=v.frame:GetHeight() or 260
     local visible=D.uiVisibleRows and D.uiVisibleRows(v,v.frame) or math.floor((h-(LIST_TOP+22))/ROW_STEP)
     if visible<1 then visible=1 end
     if visible>20 then visible=20 end
-    local maxOffset=count-visible; if maxOffset<0 then maxOffset=0 end
+    local selfRank=D.uiPinState(list,count,visible,D.uiSettings and D.uiSettings(v),true)
+    if D.meterRowsUnchanged(v.frame,cache,dur,v.scrollOffset,v.mode,periodic,selfRank) then return end
+    local maxOffset=D.uiMaxOffset(count,visible,selfRank)
     if v.scrollOffset<0 then v.scrollOffset=0 end
     if v.scrollOffset>maxOffset then v.scrollOffset=maxOffset end
     local i=1
     while i<=20 do
         local row=v.rows[i]
         local item=nil
-        if i<=visible then item=list[v.scrollOffset+i] end
+        local rank=D.uiRowIndex(i,v.scrollOffset,visible,selfRank)
+        if i<=visible then item=list[rank] end
         if item then
             local a=item.actor; local value=item.value or 0
             row.overhealTotal=item.overhealTotal
             row.actor=a; row.frame:Show(); row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value)
             local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
-            row.rank:SetText(tostring(v.scrollOffset+i).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
+            row.rank:SetText(tostring(rank).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
             if v.mode=="damage" then local rate=0; if dur>0 then rate=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",rate))
             elseif v.mode=="healing" then local rate=0; if dur>0 then rate=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",rate))
             elseif v.mode=="threat" then local pct=D.threatPercentForActor and D.threatPercentForActor(a) or 0; row.right:SetText(shortNumber(value).." | "..string.format("%.1f%%",pct))
