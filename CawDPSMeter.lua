@@ -2311,6 +2311,28 @@ local function tryRecordInterrupt(sourceInfo,ability,target)
     return D.recordInterrupt(sourceInfo,ability,target,interruptedSpell)
 end
 
+-- Damage shields (Thorns, Retribution Aura, item effects) log their retaliation as
+-- "You reflect N School damage to X." / "Y reflects N School damage to X." without
+-- naming the spell, so the school labels the entry. Enemy shields hitting the group
+-- and units outside the roster are ignored. DPSLog reports these as DAMAGE_SHIELD.
+local function parseReflect(ev,text)
+    if D.dpsLogActive then return false end
+    local _,_,amount,school,target=string.find(text,"^You reflect ([0-9]+) (.-) damage to (0x[%x]+)")
+    local a
+    if amount then
+        a=actorFromSourceToken("You")
+    else
+        local source
+        _,_,source,amount,school,target=string.find(text,"^(0x[%x]+) reflects ([0-9]+) (.-) damage to (0x[%x]+)")
+        if not amount then return false end
+        a=actorFromSourceToken(source)
+        if not a then return ignoreOutsideRoster(source) end
+    end
+    if not a or a.isTotem then return false end
+    if D.guidToActor[target] then return true end -- a shield never counts for hitting a group member
+    noteEnemyTarget(target,amount)
+    return addDamage(a.key,a.name,a.guid,a.ownerKey,a.isPet,amount,"Damage Shield ("..school..")",false,ev)
+end
 local function parseSelf(ev,text)
     if D.dpsLogActive then return false end
     local crit=isCritText(text); local _,_,amount; local spell
@@ -2953,6 +2975,7 @@ parseRaw=function(rawEvent,text)
     if D.dpsLogRawGate and D.dpsLogRawGate(rawEvent,text) then return end
     local ev=rawEvent or ""
     local route=rawEventRoute(ev)
+    if string.find(ev,"DAMAGESHIELD",1,true) and parseReflect(ev,text) then return end
 
     -- Conservative dispatch: only specialize event families whose purpose is
     -- unambiguous. Unknown/custom RavenCraft events still use the exact proven
@@ -2997,6 +3020,7 @@ parseRaw=function(rawEvent,text)
     if parseSelf(ev,text) then return end
     if parseGeneric(ev,text) then return end
     if parseHealing(ev,text) then return end
+    if string.find(text," reflect",1,true) and parseReflect(ev,text) then return end
     if not parseUtility(ev,text) then captureUnknown(ev,text) end
 end
 

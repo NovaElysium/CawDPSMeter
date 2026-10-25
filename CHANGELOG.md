@@ -6,6 +6,14 @@ and [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Damage shields now count as damage in combat-text mode. Thorns, Retribution
+  Aura and item effects log "You reflect N School damage to X." (or "Y reflects
+  ...") without naming the spell, so they were dropped as unknown lines. They are
+  now credited to the shield owner, or the owner's pet, as "Damage Shield
+  (School)" and generate threat like other damage. Enemy shields hitting the
+  group and players outside the roster are ignored, and the parser stays out of
+  the way while DPSLog is active because DPSLog reports these itself. Reported
+  by worldofwarcraftman.
 - The server Threat table now sorts by the percentage it displays. The server
   reports each player's share of the pull threshold (110% melee, 130% ranged),
   so a ranged player could hold more raw threat than the tank yet show 90%,
