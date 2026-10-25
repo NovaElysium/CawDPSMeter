@@ -5,6 +5,8 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-10-25
+
 ### Fixed
 - Damage shields now count as damage in combat-text mode. Thorns, Retribution
   Aura and item effects log "You reflect N School damage to X." (or "Y reflects
