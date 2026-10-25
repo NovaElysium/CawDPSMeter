@@ -5,6 +5,14 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The server Threat table now sorts by the percentage it displays. The server
+  reports each player's share of the pull threshold (110% melee, 130% ranged),
+  so a ranged player could hold more raw threat than the tank yet show 90%,
+  and was listed above the 100% row. Rows follow the percentage like TWThreat,
+  ties fall back to raw threat, and the bars show that percentage on a full-width
+  100% scale. Local Threat estimates are unchanged. Reported by Kadring.
+
 ## [1.1.6] - 2026-10-16
 
 ### Added

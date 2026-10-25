@@ -51,3 +51,4 @@ lua.execute((ROOT / 'tests/community_feedback_regressions.lua').read_text(encodi
 lua.execute((ROOT / 'tests/threat_retry_regressions.lua').read_text(encoding='utf-8'))
 
 lua.execute((ROOT / 'tests/always_show_me_regressions.lua').read_text(encoding='utf-8'))
+lua.execute((ROOT / 'tests/threat_order_regressions.lua').read_text(encoding='utf-8'))

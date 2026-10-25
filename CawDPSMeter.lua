@@ -3173,9 +3173,16 @@ do
     -- Validate actual values on every read, including late sync corrections.
     -- Weak actor-map keys let discarded encounters and their caches expire.
     local caches=setmetatable({}, {__mode="k"})
+    -- Server Threat rows carry the percentage of the pull threshold (110% melee,
+    -- 130% ranged), so a ranged player can hold more raw threat than the tank
+    -- while showing less than 100%. Like TWThreat, order those rows by percentage.
     local function order(x,y)
-        if x.value==y.value then return tostring(x.actor.key)<tostring(y.actor.key) end
-        return x.value>y.value
+        local kx,ky=x.sortKey or x.value,y.sortKey or y.value
+        if kx==ky then
+            if x.value~=y.value then return x.value>y.value end
+            return tostring(x.actor.key)<tostring(y.actor.key)
+        end
+        return kx>ky
     end
     function D.meterSortedRows(actors,mode)
         local modes=caches[actors]
@@ -3207,11 +3214,13 @@ do
                 else val=utilityTotal(a,mode) end
                 if val>0 then
                     local gross=mode=="overhealing" and ((a.overhealTotal or 0)+(c.petGross[a.key] or 0)) or nil
+                    local sortKey=nil
+                    if mode=="threat" and a._serverThreatValue then sortKey=tonumber(a._serverThreatPercent) or 0 end
                     local row=c.byActor[a]
                     if not row then row={actor=a}; c.byActor[a]=row; changed=true end
-                    if row.value~=val or row.name~=a.name or row.classToken~=a.classToken
+                    if row.value~=val or row.name~=a.name or row.classToken~=a.classToken or row.sortKey~=sortKey
                         or row.key~=a.key or row.isPet~=a.isPet or row.isTotem~=a.isTotem or row.overhealTotal~=gross then changed=true end
-                    row.overhealTotal=gross
+                    row.overhealTotal=gross; row.sortKey=sortKey
                     row.value=val; row.name=a.name; row.classToken=a.classToken
                     row.key=a.key; row.isPet=a.isPet; row.isTotem=a.isTotem; row.pass=c.pass
                 end
@@ -3280,6 +3289,16 @@ function D.uiMaxOffset(count,visible,selfRank)
     local m=count-visible; if m<0 then m=0 end
     if selfRank and selfRank<=count-visible then m=m+1 end
     return m
+end
+-- Server Threat bars show the server percentage (full at 100%), matching the
+-- percentage ordering; every other row scales against the top value.
+function D.uiBarFill(mode,a,value,top)
+    if mode=="threat" and a and a._serverThreatValue then
+        local pct=tonumber(a._serverThreatPercent) or 0
+        if pct>100 then pct=100 end
+        return pct,100
+    end
+    return value,top
 end
 function D.uiRowIndex(r,offset,visible,selfRank)
     if selfRank and r==visible and (selfRank<offset+1 or selfRank>offset+visible) then return selfRank end
@@ -4788,7 +4807,8 @@ updateUI=function(periodic)
             row.actor=a; row.frame:Show(); local value
             row.overhealTotal=cache and cache.rows[absoluteIndex] and cache.rows[absoluteIndex].overhealTotal
             value=a._cawDisplayValue or 0
-            row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value); local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
+            local barValue,barMax=D.uiBarFill(D.mode,a,value,top)
+            row.bar:SetMinMaxValues(0,barMax); row.bar:SetValue(barValue); local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
             row.rank:SetText(tostring(absoluteIndex).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
             if D.mode=="damage" then local dps=0; if dur>0 then dps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",dps).." DPS")
             elseif D.mode=="healing" then local hps=0; if dur>0 then hps=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",hps).." HPS")
@@ -5185,7 +5205,8 @@ function D.updateMultiWindow(v,periodic)
         if item then
             local a=item.actor; local value=item.value or 0
             row.overhealTotal=item.overhealTotal
-            row.actor=a; row.frame:Show(); row.bar:SetMinMaxValues(0,top); row.bar:SetValue(value)
+            local barValue,barMax=D.uiBarFill(v.mode,a,value,top)
+            row.actor=a; row.frame:Show(); row.bar:SetMinMaxValues(0,barMax); row.bar:SetValue(barValue)
             local cr,cg,cb=classColor(a); row.bar:SetStatusBarColor(cr,cg,cb)
             row.rank:SetText(tostring(rank).."."); row.left:SetText(tostring(a.name)); row.left:SetTextColor(cr,cg,cb)
             if v.mode=="damage" then local rate=0; if dur>0 then rate=value/dur end; row.right:SetText(shortNumber(value).." | "..string.format("%.1f",rate))
