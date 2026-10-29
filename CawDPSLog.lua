@@ -118,12 +118,13 @@ function D.dpsLogRawGate(ev,text)
     return true
 end
 local function reject(reason)
+    -- Record for /cawinput only. The common cause -- another addon or client mod
+    -- firing COMBAT_LOG_EVENT_UNFILTERED -- is now ignored before it reaches
+    -- here (see the OnEvent handler), so an unsolicited chat warning would be
+    -- noise for the player; the count and last reason remain under /cawinput.
     D.dpsLogRejected=D.dpsLogRejected+1; D.dpsLogLastError=reason
     if D.dpsLogProbing then choose(false,reason) end
     status()
-    if D.dpsLogRejected==1 and DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("Caw: DPSLog event rejected ("..reason.."). See /cawinput.")
-    end
     return false
 end
 local function spellName(id,name)
@@ -272,8 +273,17 @@ f:SetScript("OnEvent",function()
     if not D.parserEnabled() then return end
     if event=="PLAYER_ENTERING_WORLD" then D.dpsLogInitialize()
     elseif event=="COMBAT_LOG_EVENT_UNFILTERED" and (D.dpsLogActive or D.dpsLogProbing) then
-        local ok,err=pcall(function() D.dpsLogReceive(CombatLogGetCurrentEventInfo()) end)
-        if not ok then reject("event API: "..tostring(err)) end
+        -- The DPSLog Community Edition delivers events through DpsLogPopEvent
+        -- polling and does not fire this native event (its custom event-table
+        -- write was removed). When polling is available a native
+        -- COMBAT_LOG_EVENT_UNFILTERED therefore comes from another addon or
+        -- client mod, not DPSLog: its arguments are an unrelated layout that
+        -- would be rejected as an unsupported header and, during the probe,
+        -- would drop the whole session to combat text. Let polling own delivery.
+        if type(DpsLogPopEvent)~="function" then
+            local ok,err=pcall(function() D.dpsLogReceive(CombatLogGetCurrentEventInfo()) end)
+            if not ok then reject("event API: "..tostring(err)) end
+        end
     end
 end)
 -- Polling fallback: native COMBAT_LOG_EVENT_UNFILTERED delivery through the

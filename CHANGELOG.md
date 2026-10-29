@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-10-29
+
+### Fixed
+- DPSLog input no longer falls back to combat text when another addon or client
+  mod fires the game's combat-log event. With the DPSLog Community Edition
+  installed, such an unrelated event was read as an "unsupported header" and, if
+  it arrived during start-up, dropped the whole session to combat text so DPSLog
+  did nothing. Caw now takes DPSLog events only through its own polling channel
+  (`DpsLogPopEvent`) and ignores unrelated `COMBAT_LOG_EVENT_UNFILTERED` events.
+  The one-time chat warning about a rejected event is removed; the counts remain
+  under `/cawinput`. Reported by Icekronik and Taroven.
+
 ## [1.1.7] - 2026-10-25
 
 ### Fixed

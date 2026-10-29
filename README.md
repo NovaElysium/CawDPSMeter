@@ -33,8 +33,8 @@ did not see. Up to four independent windows share the same combat data.
 
 ## Interface
 
-See the [1.1.7 release notes](RELEASE_NOTES_1.1.7.md) for the latest fixes, including
-damage shields and the Threat table order.
+See the [1.1.8 release notes](RELEASE_NOTES_1.1.8.md) for the latest fixes, including
+more reliable DPSLog input alongside other addons.
 
 Left-click a player bar for an ability breakdown with player and segment selection.
 Scroll the player list with the mouse wheel anywhere over the bars or their

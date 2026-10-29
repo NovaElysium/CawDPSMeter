@@ -1047,4 +1047,35 @@ D.dpsLogSaveStatus(moduleSession)
 check(moduleSession.dpsLogStatus.modules.versions.dpslog=='query failed','DLL version query errors do not break calibration')
 GetWeirdUtilsVersion=nil
 D.threatCalEnabled=false
+-- DPSLog Community Edition delivers events through DpsLogPopEvent polling and no
+-- longer fires the native COMBAT_LOG_EVENT_UNFILTERED. When polling is present, a
+-- native event comes from an unrelated addon or client mod; processing it used to
+-- reject a foreign header and, during the probe, drop the whole session to combat
+-- text (community reports of "unsupported header" with DPSLog installed).
+resetDpsDiscovery()
+CombatLogGetCurrentEventInfo=function() return 1234.5,'SWING_DAMAGE','0x1','Hunter',1,'0xF1','Mob',64,30 end
+local popQueue={}
+DpsLogPopEvent=function()
+    local e=table.remove(popQueue,1)
+    if not e then return nil end
+    return e[1],e[2],e[3],e[4],e[5],e[6],e[7],e[8],e[9],e[10],e[11],e[12],e[13],e[14],e[15],e[16]
+end
+D.dpsLogInitialize()
+check(D.dpsLogProbing and type(DpsLogPopEvent)=='function','CE install probes with polling available')
+fresh(); local priorReject=D.dpsLogRejected
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.dpsLogProbing and not D.dpsLogActive and D.dpsLogRejected==priorReject,
+    'a foreign native combat-log event is ignored while polling is available and cannot end the probe')
+table.insert(popQueue,{'SWING_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,30,-1,1,0,0,0,'1'})
+NOW=NOW+0.1; D.dpsLogFrame.scripts.OnUpdate()
+check(D.dpsLogActive and D.actors['0x1'].damage==30 and D.dpsLogRejected==priorReject,
+    'polling delivers the first real event and selects DPSLog without any reject')
+-- An old-DLL install (no polling) must still process the native event as before.
+DpsLogPopEvent=nil
+resetDpsDiscovery()
+CombatLogGetCurrentEventInfo=function() return 'SWING_DAMAGE','0x1','Hunter',1,0,'0xF1','Mob',64,0,22,-1,1,0,0,0,'1' end
+D.dpsLogInitialize(); fresh()
+fire(D.dpsLogFrame,'COMBAT_LOG_EVENT_UNFILTERED')
+check(D.dpsLogActive and D.actors['0x1'].damage==22,'without polling the native event still delivers DPSLog damage')
+resetDpsDiscovery(); D.threatCalEnabled=false
 print("Checks: "..count)
